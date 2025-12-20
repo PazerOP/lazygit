@@ -397,6 +397,7 @@ var tests = []*components.IntegrationTest{
 	submodule.RemoveNested,
 	submodule.Reset,
 	submodule.ResetFolder,
+	submodule.ResetNested,
 	sync.FetchAndAutoForwardBranchesAllBranches,
 	sync.FetchAndAutoForwardBranchesAllBranchesCheckedOutInOtherWorktree,
 	sync.FetchAndAutoForwardBranchesNone,

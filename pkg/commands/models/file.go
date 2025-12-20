@@ -69,7 +69,7 @@ func (f *File) IsSubmodule(configs []*SubmoduleConfig) bool {
 
 func (f *File) SubmoduleConfig(configs []*SubmoduleConfig) *SubmoduleConfig {
 	for _, config := range configs {
-		if f.Path == config.Path {
+		if f.Path == config.FullPath() {
 			return config
 		}
 	}

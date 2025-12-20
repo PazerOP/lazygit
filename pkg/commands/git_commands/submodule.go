@@ -85,7 +85,7 @@ func (self *SubmoduleCommands) GetConfigs(parentModule *models.SubmoduleConfig) 
 func (self *SubmoduleCommands) Stash(submodule *models.SubmoduleConfig) error {
 	// if the path does not exist then it hasn't yet been initialized so we'll swallow the error
 	// because the intention here is to have no dirty worktree state
-	if _, err := os.Stat(submodule.Path); os.IsNotExist(err) {
+	if _, err := os.Stat(submodule.FullPath()); os.IsNotExist(err) {
 		self.Log.Infof("submodule path %s does not exist, returning", submodule.FullPath())
 		return nil
 	}
