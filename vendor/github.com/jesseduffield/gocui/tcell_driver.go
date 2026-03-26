@@ -169,6 +169,11 @@ type GocuiEvent struct {
 	Focused bool
 	Start   bool
 	N       int
+	// ShiftPressed is true when the Shift key was physically held down,
+	// as reported by an extended terminal key protocol (kitty CSI-u,
+	// xterm modifyOtherKeys, win32-input-mode). This allows distinguishing
+	// Shift+key from CapsLock-induced uppercase.
+	ShiftPressed bool
 }
 
 // Event types.
@@ -298,6 +303,7 @@ func (g *Gui) pollEvent() GocuiEvent {
 			}
 		}
 		mod := tev.Modifiers()
+		shiftPressed := false
 		// remove control modifier and setup special handling of ctrl+spacebar, etc.
 		if mod == tcell.ModCtrl && k == 32 {
 			mod = 0
@@ -311,10 +317,24 @@ func (g *Gui) pollEvent() GocuiEvent {
 			mod = 0
 			ch = rune(0)
 			k = tcell.KeyF63
-		} else if mod == tcell.ModCtrl || mod == tcell.ModShift {
-			// remove Ctrl or Shift if specified
-			// - shift - will be translated to the final code of rune
-			// - ctrl  - is translated in the key
+		} else if mod == tcell.ModCtrl|tcell.ModShift {
+			// Ctrl+Shift combination: strip both, record shift
+			shiftPressed = true
+			if ch >= 'a' && ch <= 'z' {
+				ch = ch - 'a' + 'A'
+			}
+			mod = 0
+		} else if mod == tcell.ModCtrl {
+			// ctrl is translated in the key
+			mod = 0
+		} else if mod == tcell.ModShift {
+			// Shift reported by extended key protocol (kitty CSI-u,
+			// xterm modifyOtherKeys, win32-input-mode). The rune may
+			// be the base key (lowercase from kitty) — ensure uppercase.
+			shiftPressed = true
+			if ch >= 'a' && ch <= 'z' {
+				ch = ch - 'a' + 'A'
+			}
 			mod = 0
 		} else if mod == tcell.ModAlt && k == tcell.KeyEnter {
 			// for the sake of convenience I'm having a KeyAltEnter key. I will likely
@@ -325,10 +345,11 @@ func (g *Gui) pollEvent() GocuiEvent {
 		}
 
 		return GocuiEvent{
-			Type: eventKey,
-			Key:  Key(k),
-			Ch:   ch,
-			Mod:  Modifier(mod),
+			Type:         eventKey,
+			Key:          Key(k),
+			Ch:           ch,
+			Mod:          Modifier(mod),
+			ShiftPressed: shiftPressed,
 		}
 	case *tcell.EventMouse:
 		x, y := tev.Position()

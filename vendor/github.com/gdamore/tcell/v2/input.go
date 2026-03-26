@@ -758,10 +758,8 @@ func (ip *inputProcessor) handleWinKey(P []int) {
 	if P[4]&0x0003 != 0 {
 		mod |= ModAlt
 	}
-	if key == KeyRune && chr > ' ' && mod == ModShift {
-		// filter out lone shift for printable chars
-		mod = ModNone
-	}
+	// Preserve ModShift for printable chars so downstream code can
+	// distinguish physical Shift from CapsLock-induced uppercase.
 	if chr != 0 && mod&(ModCtrl|ModAlt) == ModCtrl|ModAlt {
 		// Filter out ctrl+alt (it means AltGr)
 		mod = ModNone

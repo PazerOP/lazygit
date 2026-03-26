@@ -205,6 +205,12 @@ type Gui struct {
 	taskManager *TaskManager
 
 	lastHoverView *View
+
+	// capsLockNormalization is set to true when the terminal is detected
+	// to support extended key protocols (by observing ModShift on a rune event).
+	// Once set, uppercase letters without ModShift are treated as lowercase
+	// for keybinding matching (CapsLock normalization).
+	capsLockNormalization bool
 }
 
 type NewGuiOpts struct {
@@ -1527,13 +1533,29 @@ func (g *Gui) execKeybindings(v *View, ev *GocuiEvent) error {
 		return nil
 	}
 
+	// Auto-detect extended key protocol support: if the terminal
+	// reports ShiftPressed for a rune event, it supports an extended
+	// protocol and we can distinguish Shift from CapsLock.
+	if ev.ShiftPressed && ev.Key == 0 && ev.Ch != 0 {
+		g.capsLockNormalization = true
+	}
+
+	// CapsLock normalization: when extended key protocol is detected and
+	// the event has an uppercase letter without physical Shift, treat it
+	// as lowercase for keybinding matching. We use a separate matchCh
+	// so that the original ev.Ch (uppercase) is preserved for text editing.
+	matchCh := ev.Ch
+	if g.capsLockNormalization && !ev.ShiftPressed && ev.Ch >= 'A' && ev.Ch <= 'Z' && ev.Key == 0 && ev.Mod == ModNone {
+		matchCh = ev.Ch - 'A' + 'a'
+	}
+
 	// if we're searching, and we've hit n/N/Esc, we ignore the default keybinding
 	if v != nil && v.IsSearching() && ev.Mod == ModNone {
-		if eventMatchesKey(ev, g.NextSearchMatchKey) {
+		if eventMatchesKeyWithCh(ev, matchCh, g.NextSearchMatchKey) {
 			return v.gotoNextMatch()
-		} else if eventMatchesKey(ev, g.PrevSearchMatchKey) {
+		} else if eventMatchesKeyWithCh(ev, matchCh, g.PrevSearchMatchKey) {
 			return v.gotoPreviousMatch()
-		} else if eventMatchesKey(ev, g.SearchEscapeKey) {
+		} else if eventMatchesKeyWithCh(ev, matchCh, g.SearchEscapeKey) {
 			v.searcher.clearSearch()
 			if g.OnSearchEscape != nil {
 				if err := g.OnSearchEscape(); err != nil {
@@ -1550,7 +1572,7 @@ func (g *Gui) execKeybindings(v *View, ev *GocuiEvent) error {
 		if kb.handler == nil {
 			continue
 		}
-		if !kb.matchKeypress(ev.Key, ev.Ch, ev.Mod) {
+		if !kb.matchKeypress(ev.Key, matchCh, ev.Mod) {
 			continue
 		}
 		if g.matchView(v, kb) {
@@ -1577,6 +1599,8 @@ func (g *Gui) execKeybindings(v *View, ev *GocuiEvent) error {
 	}
 
 	if g.currentView != nil && g.currentView.Editable && g.currentView.Editor != nil {
+		// Use original ev.Ch for text editing so CapsLock still
+		// produces uppercase characters in input fields.
 		matched := g.currentView.Editor.Edit(g.currentView, ev.Key, ev.Ch, ev.Mod)
 		if matched {
 			return nil
