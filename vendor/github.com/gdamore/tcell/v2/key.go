@@ -278,11 +278,10 @@ func NewEventKey(k Key, ch rune, mod ModMask) *EventKey {
 		k = KeyCtrlA + Key(ch-'a')
 	}
 
-	// Windows reports ModShift for shifted keys.  This is inconsistent
-	// with UNIX, lets harmonize this.
-	if k == KeyRune && mod == ModShift && ch != 0 {
-		mod = ModNone
-	}
+	// Preserve ModShift for KeyRune events so that downstream code
+	// (e.g. gocui) can distinguish a physical Shift press from
+	// CapsLock-induced uppercase when the terminal uses an extended
+	// key protocol (kitty CSI-u, xterm modifyOtherKeys, win32-input-mode).
 
 	if k >= KeyCtrlA && k <= KeyCtrlZ {
 		if mod&ModShift != 0 {

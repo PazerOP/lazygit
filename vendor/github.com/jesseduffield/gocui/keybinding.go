@@ -117,6 +117,22 @@ func eventMatchesKey(ev *GocuiEvent, key any) bool {
 	return k == ev.Key && ch == ev.Ch
 }
 
+// eventMatchesKeyWithCh is like eventMatchesKey but uses the provided matchCh
+// instead of ev.Ch, to support CapsLock normalization in keybinding matching
+// while preserving the original ev.Ch for text editing.
+func eventMatchesKeyWithCh(ev *GocuiEvent, matchCh rune, key any) bool {
+	if ev.Mod != ModNone {
+		return false
+	}
+
+	k, ch, err := getKey(key)
+	if err != nil {
+		return false
+	}
+
+	return k == ev.Key && ch == matchCh
+}
+
 // matchKeypress returns if the keybinding matches the keypress.
 func (kb *keybinding) matchKeypress(key Key, ch rune, mod Modifier) bool {
 	return kb.key == key && kb.ch == ch && kb.mod == mod
