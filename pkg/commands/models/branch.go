@@ -21,6 +21,8 @@ type Branch struct {
 	AheadForPush string
 	// how many commits behind we are from the branch we're pushing to (which might not be the same as our upstream branch in a triangular workflow)
 	BehindForPush string
+	// Whether one of the values above is still being determined.
+	DivergencePending bool
 	// whether the remote branch is 'gone' i.e. we're tracking a remote branch that has been deleted
 	UpstreamGone bool
 	// whether this is the current branch. Exactly one branch should have this be true
@@ -55,6 +57,33 @@ type Branch struct {
 	// False for branches that haven't diverged, and for those we haven't
 	// determined it for yet.
 	UpstreamRewritten atomic.Bool
+}
+
+// Returns a copy of the branch. Assigning a Branch to another is not an
+// option, because that copies its atomic values.
+func (b *Branch) Clone() *Branch {
+	clone := &Branch{
+		Name:              b.Name,
+		DisplayName:       b.DisplayName,
+		Recency:           b.Recency,
+		AheadForPull:      b.AheadForPull,
+		BehindForPull:     b.BehindForPull,
+		AheadForPush:      b.AheadForPush,
+		BehindForPush:     b.BehindForPush,
+		DivergencePending: b.DivergencePending,
+		UpstreamGone:      b.UpstreamGone,
+		Head:              b.Head,
+		DetachedHead:      b.DetachedHead,
+		UpstreamRemote:    b.UpstreamRemote,
+		UpstreamBranch:    b.UpstreamBranch,
+		PushRemote:        b.PushRemote,
+		PushBranch:        b.PushBranch,
+		Subject:           b.Subject,
+		CommitHash:        b.CommitHash,
+	}
+	clone.BehindBaseBranch.Store(b.BehindBaseBranch.Load())
+	clone.UpstreamRewritten.Store(b.UpstreamRewritten.Load())
+	return clone
 }
 
 func (b *Branch) FullRefName() string {
