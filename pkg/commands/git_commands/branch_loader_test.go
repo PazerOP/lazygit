@@ -28,11 +28,11 @@ func TestObtainBranch(t *testing.T) {
 
 	scenarios := []scenario{
 		{
-			testName:                 "TrimHeads",
-			input:                    []string{"", "heads/a_branch", "", "", "subject", "123", timeStamp},
+			testName:                 "NameWithSlashes",
+			input:                    []string{"", "refs/heads/feature/a_branch", "", "", "subject", "123", timeStamp},
 			storeCommitDateAsRecency: false,
 			expectedBranch: &models.Branch{
-				Name:       "a_branch",
+				Name:       "feature/a_branch",
 				Head:       false,
 				Subject:    "subject",
 				CommitHash: "123",
@@ -40,7 +40,7 @@ func TestObtainBranch(t *testing.T) {
 		},
 		{
 			testName:                 "NoUpstream",
-			input:                    []string{"", "a_branch", "", "", "subject", "123", timeStamp},
+			input:                    []string{"", "refs/heads/a_branch", "", "", "subject", "123", timeStamp},
 			storeCommitDateAsRecency: false,
 			expectedBranch: &models.Branch{
 				Name:       "a_branch",
@@ -51,7 +51,7 @@ func TestObtainBranch(t *testing.T) {
 		},
 		{
 			testName:                 "IsHead",
-			input:                    []string{"*", "a_branch", "", "", "subject", "123", timeStamp},
+			input:                    []string{"*", "refs/heads/a_branch", "", "", "subject", "123", timeStamp},
 			storeCommitDateAsRecency: false,
 			expectedBranch: &models.Branch{
 				Name:       "a_branch",
@@ -62,7 +62,7 @@ func TestObtainBranch(t *testing.T) {
 		},
 		{
 			testName:                 "PushDestinationIsUpstream",
-			input:                    []string{"", "a_branch", "refs/remotes/a_remote/a_branch", "refs/remotes/a_remote/a_branch", "subject", "123", timeStamp},
+			input:                    []string{"", "refs/heads/a_branch", "refs/remotes/a_remote/a_branch", "refs/remotes/a_remote/a_branch", "subject", "123", timeStamp},
 			storeCommitDateAsRecency: false,
 			expectedRefs: trackedRefs{
 				upstream: "refs/remotes/a_remote/a_branch",
@@ -79,7 +79,7 @@ func TestObtainBranch(t *testing.T) {
 		},
 		{
 			testName:                 "PushDestinationDiffersFromUpstream",
-			input:                    []string{"", "a_branch", "refs/remotes/a_remote/a_branch", "refs/remotes/my_fork/feature/a_branch", "subject", "123", timeStamp},
+			input:                    []string{"", "refs/heads/a_branch", "refs/remotes/a_remote/a_branch", "refs/remotes/my_fork/feature/a_branch", "subject", "123", timeStamp},
 			storeCommitDateAsRecency: false,
 			expectedRefs: trackedRefs{
 				upstream: "refs/remotes/a_remote/a_branch",
@@ -96,7 +96,7 @@ func TestObtainBranch(t *testing.T) {
 		},
 		{
 			testName:                 "PushDestinationNotARemoteTrackingRef",
-			input:                    []string{"", "a_branch", "refs/remotes/a_remote/a_branch", "refs/published/a_branch", "subject", "123", timeStamp},
+			input:                    []string{"", "refs/heads/a_branch", "refs/remotes/a_remote/a_branch", "refs/published/a_branch", "subject", "123", timeStamp},
 			storeCommitDateAsRecency: false,
 			expectedRefs: trackedRefs{
 				upstream: "refs/remotes/a_remote/a_branch",
@@ -111,7 +111,7 @@ func TestObtainBranch(t *testing.T) {
 		},
 		{
 			testName:                 "UpstreamIsLocalBranch",
-			input:                    []string{"", "a_branch", "refs/heads/other_branch", "", "subject", "123", timeStamp},
+			input:                    []string{"", "refs/heads/a_branch", "refs/heads/other_branch", "", "subject", "123", timeStamp},
 			storeCommitDateAsRecency: false,
 			expectedRefs:             trackedRefs{upstream: "refs/heads/other_branch"},
 			expectedBranch: &models.Branch{
@@ -123,7 +123,7 @@ func TestObtainBranch(t *testing.T) {
 		},
 		{
 			testName:                 "WithCommitDateAsRecency",
-			input:                    []string{"", "a_branch", "", "", "subject", "123", timeStamp},
+			input:                    []string{"", "refs/heads/a_branch", "", "", "subject", "123", timeStamp},
 			storeCommitDateAsRecency: true,
 			expectedBranch: &models.Branch{
 				Name:       "a_branch",

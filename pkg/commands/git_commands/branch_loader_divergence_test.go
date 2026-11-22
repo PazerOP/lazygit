@@ -15,7 +15,7 @@ import (
 var listBranchesArgs = []string{
 	"for-each-ref",
 	"--sort=-committerdate",
-	"--format=%(HEAD)%00%(refname:short)%00%(upstream)%00%(push)%00%(subject)%00%(objectname)%00%(committerdate:unix)",
+	"--format=%(HEAD)%00%(refname)%00%(upstream)%00%(push)%00%(subject)%00%(objectname)%00%(committerdate:unix)",
 	"refs/heads",
 }
 
@@ -23,7 +23,7 @@ var branchConfigArgs = []string{"config", "--local", "--get-regexp", `^branch\.`
 
 // A line of the output of the command that lists the branches
 func branchLine(head string, name string, upstream string, push string, hash string, date int) string {
-	return strings.Join([]string{head, name, upstream, push, "subject", hash, fmt.Sprint(date)}, "\x00") + "\n"
+	return strings.Join([]string{head, "refs/heads/" + name, upstream, push, "subject", hash, fmt.Sprint(date)}, "\x00") + "\n"
 }
 
 func buildBranchLoader(runner *oscommands.FakeCmdObjRunner, gitVersion *GitVersion) *BranchLoader {

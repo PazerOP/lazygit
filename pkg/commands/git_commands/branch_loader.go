@@ -457,7 +457,7 @@ func (self *BranchLoader) getRawBranches() (string, error) {
 // history for each branch to fill them in.
 var branchFields = []string{
 	"HEAD",
-	"refname:short",
+	"refname",
 	"upstream",
 	"push",
 	"subject",
@@ -484,7 +484,7 @@ func obtainBranch(split []string, storeCommitDateAsRecency bool) (*models.Branch
 	commitHash := split[5]
 	commitDate := split[6]
 
-	name := strings.TrimPrefix(fullName, "heads/")
+	name := strings.TrimPrefix(fullName, "refs/heads/")
 	pushRemote, pushBranch := parsePushDestination(pushRef)
 
 	recency := ""
