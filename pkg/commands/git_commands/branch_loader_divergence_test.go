@@ -247,8 +247,14 @@ func TestBranchLoaderDivergences(t *testing.T) {
 			ExpectGitArgs([]string{
 				"for-each-ref", "--format=%(objectname)%00%(ahead-behind:ddd)", "refs/heads/diverged",
 			}, "ccc\x002 5\n", nil)
-		_, err = resolveDivergences()
+		resolvedBranches, err := resolveDivergences()
 		assert.ErrorContains(t, err, "failed to find 'aaa'")
+		// The branches come back all the same, so that the UI can show what
+		// git did find out
+		assert.Equal(t,
+			branchDivergence{name: "behind", aheadForPull: "?", behindForPull: "?", aheadForPush: "0", behindForPush: "0"},
+			branchDivergences(resolvedBranches)[1])
+		assert.Equal(t, resolved[2], branchDivergences(resolvedBranches)[2])
 	})
 
 	t.Run("git versions without %(ahead-behind) are asked about each pair of commits", func(t *testing.T) {
