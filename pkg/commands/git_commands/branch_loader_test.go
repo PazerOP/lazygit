@@ -354,10 +354,12 @@ func TestCheckForRewrittenUpstreams(t *testing.T) {
 
 	gitCommon := buildGitCommon(commonDeps{})
 	loader := &BranchLoader{
-		Common:              gitCommon.Common,
-		GitCommon:           gitCommon,
-		cmd:                 gitCommon.cmd,
-		hasLocalOnlyCommits: hasLocalOnlyCommits,
+		Common:    gitCommon.Common,
+		GitCommon: gitCommon,
+		cmd:       gitCommon.cmd,
+		newLocalOnlyCommitsCheck: func() func(*models.Branch) (bool, error) {
+			return hasLocalOnlyCommits
+		},
 	}
 
 	rendered := false

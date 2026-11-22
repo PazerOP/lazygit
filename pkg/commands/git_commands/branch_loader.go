@@ -3,6 +3,7 @@ package git_commands
 import (
 	"fmt"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -46,8 +47,9 @@ type BranchLoader struct {
 	*GitCommon
 	cmd                  oscommands.ICmdObjBuilder
 	getCurrentBranchInfo func() (BranchInfo, error)
-	hasLocalOnlyCommits  func(*models.Branch) (bool, error)
-	config               BranchLoaderConfigCommands
+	// Returns a function that tells whether a branch that is ahead of its upstream has commits of its own
+	newLocalOnlyCommitsCheck func() func(*models.Branch) (bool, error)
+	config                   BranchLoaderConfigCommands
 }
 
 func NewBranchLoader(
@@ -55,16 +57,16 @@ func NewBranchLoader(
 	gitCommon *GitCommon,
 	cmd oscommands.ICmdObjBuilder,
 	getCurrentBranchInfo func() (BranchInfo, error),
-	hasLocalOnlyCommits func(*models.Branch) (bool, error),
+	newLocalOnlyCommitsCheck func() func(*models.Branch) (bool, error),
 	config BranchLoaderConfigCommands,
 ) *BranchLoader {
 	return &BranchLoader{
-		Common:               cmn,
-		GitCommon:            gitCommon,
-		cmd:                  cmd,
-		getCurrentBranchInfo: getCurrentBranchInfo,
-		hasLocalOnlyCommits:  hasLocalOnlyCommits,
-		config:               config,
+		Common:                   cmn,
+		GitCommon:                gitCommon,
+		cmd:                      cmd,
+		getCurrentBranchInfo:     getCurrentBranchInfo,
+		newLocalOnlyCommitsCheck: newLocalOnlyCommitsCheck,
+		config:                   config,
 	}
 }
 
@@ -174,7 +176,10 @@ func (self *BranchLoader) Load(reflogCommits []*models.Commit,
 // answer "no", so that we don't offer anything we aren't sure about.
 func (self *BranchLoader) checkForRewrittenUpstreams(branches []*models.Branch, renderFunc func()) error {
 	t := time.Now()
+	hasLocalOnlyCommits := self.newLocalOnlyCommitsCheck()
 	errg := errgroup.Group{}
+	// Each check runs git processes; a repository can have thousands of diverged branches
+	errg.SetLimit(runtime.GOMAXPROCS(0))
 
 	for _, branch := range branches {
 		if !branch.IsAheadForPull() || !branch.IsBehindForPull() {
@@ -183,7 +188,7 @@ func (self *BranchLoader) checkForRewrittenUpstreams(branches []*models.Branch, 
 		}
 
 		errg.Go(utils.SafeFuncWithError(func() error {
-			hasLocalOnlyCommits, err := self.hasLocalOnlyCommits(branch)
+			hasLocalOnlyCommits, err := hasLocalOnlyCommits(branch)
 			if err != nil {
 				// Not worth bothering the user about; it only means that we
 				// don't show this branch differently.
