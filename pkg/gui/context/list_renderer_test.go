@@ -2,6 +2,7 @@ package context
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -141,6 +142,68 @@ func TestListRenderer_renderLines(t *testing.T) {
 				func(line string, _ int) string { return strings.TrimSpace(line) }), "\n")
 
 			assert.Equal(t, expectedOutput, self.renderLines(s.startIdx, s.endIdx))
+		})
+	}
+}
+
+func TestListRenderer_renderLines_alignColumnsAcrossAllItems(t *testing.T) {
+	rows := [][]string{
+		{"a", "one"},
+		{"bbb", "two"},
+		{"cc", "three"},
+	}
+	modelStrings := lo.Map(rows, func(row []string, _ int) mystring { return mystring(row[0]) })
+
+	scenarios := []struct {
+		name                       string
+		alignColumnsAcrossAllItems bool
+		startIdx                   int
+		endIdx                     int
+		expectedOutput             string
+	}{
+		{
+			name:                       "the rendered lines are as wide as their own columns need",
+			alignColumnsAcrossAllItems: false,
+			startIdx:                   0,
+			endIdx:                     1,
+			expectedOutput:             "a one",
+		},
+		{
+			name:                       "the rendered lines line up with the lines that are not rendered",
+			alignColumnsAcrossAllItems: true,
+			startIdx:                   0,
+			endIdx:                     1,
+			expectedOutput:             "a   one",
+		},
+		{
+			name:                       "a range at the end of the list",
+			alignColumnsAcrossAllItems: true,
+			startIdx:                   1,
+			endIdx:                     5,
+			expectedOutput:             "bbb two\ncc  three",
+		},
+		{
+			name:                       "a range beyond the end of the list",
+			alignColumnsAcrossAllItems: true,
+			startIdx:                   4,
+			endIdx:                     6,
+			expectedOutput:             "",
+		},
+	}
+	for _, s := range scenarios {
+		t.Run(s.name, func(t *testing.T) {
+			self := &ListRenderer{
+				list: NewListViewModel(func() []mystring { return modelStrings }),
+				getDisplayStrings: func(startIdx int, endIdx int) [][]string {
+					if s.alignColumnsAcrossAllItems {
+						return slices.Clone(rows)
+					}
+					return rows[startIdx:endIdx]
+				},
+				alignColumnsAcrossAllItems: s.alignColumnsAcrossAllItems,
+			}
+
+			assert.Equal(t, s.expectedOutput, self.renderLines(s.startIdx, s.endIdx))
 		})
 	}
 }
