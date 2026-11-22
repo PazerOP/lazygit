@@ -18,13 +18,46 @@ type File struct {
 	Deleted                 bool
 	HasMergeConflicts       bool
 	HasInlineMergeConflicts bool
-	DisplayString           string
-	ShortStatus             string // e.g. 'AD', ' A', 'M ', '??'
-	LinesDeleted            int
-	LinesAdded              int
+	// How long the conflict markers in this file are, taken from its
+	// conflict-marker-size gitattribute; 0 if it doesn't have that attribute. We
+	// only look this up for files that have inline merge conflicts.
+	ConflictMarkerSize int
+	DisplayString      string
+	ShortStatus        string // e.g. 'AD', ' A', 'M ', '??'
+	LinesDeleted       int
+	LinesAdded         int
 
 	// If true, this must be a worktree folder
 	IsWorktree bool
+
+	// Set if git status reports this entry as a whole directory instead of
+	// listing the files in it
+	DirectoryKind DirectoryKind
+}
+
+type DirectoryKind int
+
+const (
+	NotADirectory DirectoryKind = iota
+	// An untracked directory without a repository of its own. git status
+	// only reports these as a whole if status.showUntrackedFiles is "normal".
+	PlainDirectory
+	// A git repository of its own inside the working tree, which git status
+	// doesn't descend into. A linked worktree of this repo inside the working
+	// tree is one of these too; IsWorktree tells it apart.
+	NestedRepository
+	// A nested repository whose git dir is among the git dirs that git keeps
+	// for the submodules of this repo. It is what is left of a submodule after
+	// checking out a commit that removed it: git takes the submodule out of
+	// the index, but leaves its directory behind.
+	RemovedSubmodule
+)
+
+// IsNestedRepository reports whether the file is a git repository of its own
+// inside the working tree, such as a linked worktree or the directory of a
+// removed submodule
+func (f *File) IsNestedRepository() bool {
+	return f.DirectoryKind == NestedRepository || f.DirectoryKind == RemovedSubmodule
 }
 
 // sometimes we need to deal with either a node (which contains a file) or an actual file

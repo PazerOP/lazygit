@@ -21,6 +21,14 @@ func (self *CommitDescriptionPanelDriver) Type(value string) *CommitDescriptionP
 	return self
 }
 
+// Paste the text the way a terminal does it, as opposed to pasting it with the
+// commit menu
+func (self *CommitDescriptionPanelDriver) Paste(text string) *CommitDescriptionPanelDriver {
+	self.t.paste(text)
+
+	return self
+}
+
 func (self *CommitDescriptionPanelDriver) SwitchToSummary() *CommitMessagePanelDriver {
 	self.getViewDriver().PressTab()
 	return &CommitMessagePanelDriver{t: self.t}
@@ -37,12 +45,12 @@ func (self *CommitDescriptionPanelDriver) GoToBeginning() *CommitDescriptionPane
 		self.t.pressFast("<up>")
 	}
 
-	self.t.pressFast("<c-a>")
+	self.t.pressFast("<ctrl+a>")
 	return self
 }
 
 func (self *CommitDescriptionPanelDriver) AddCoAuthor(author string) *CommitDescriptionPanelDriver {
-	self.t.press(self.t.keys.CommitMessage.CommitMenu)
+	self.t.press(self.t.keys.CommitMessage.CommitMenu[0])
 	self.t.ExpectPopup().Menu().Title(Equals("Commit Menu")).
 		Select(Contains("Add co-author")).
 		Confirm()

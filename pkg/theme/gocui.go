@@ -2,23 +2,25 @@ package theme
 
 import (
 	"github.com/gookit/color"
-	"github.com/jesseduffield/gocui"
+	"github.com/jesseduffield/lazygit/pkg/gocui"
 	"github.com/jesseduffield/lazygit/pkg/utils"
 )
 
 var gocuiColorMap = map[string]gocui.Attribute{
-	"default":   gocui.ColorDefault,
-	"black":     gocui.ColorBlack,
-	"red":       gocui.ColorRed,
-	"green":     gocui.ColorGreen,
-	"yellow":    gocui.ColorYellow,
-	"blue":      gocui.ColorBlue,
-	"magenta":   gocui.ColorMagenta,
-	"cyan":      gocui.ColorCyan,
-	"white":     gocui.ColorWhite,
-	"bold":      gocui.AttrBold,
-	"reverse":   gocui.AttrReverse,
-	"underline": gocui.AttrUnderline,
+	"default":       gocui.ColorDefault,
+	"black":         gocui.ColorBlack,
+	"red":           gocui.ColorRed,
+	"green":         gocui.ColorGreen,
+	"yellow":        gocui.ColorYellow,
+	"blue":          gocui.ColorBlue,
+	"magenta":       gocui.ColorMagenta,
+	"cyan":          gocui.ColorCyan,
+	"white":         gocui.ColorWhite,
+	"bold":          gocui.AttrBold,
+	"dim":           gocui.AttrDim,
+	"reverse":       gocui.AttrReverse,
+	"underline":     gocui.AttrUnderline,
+	"strikethrough": gocui.AttrStrikeThrough,
 }
 
 // GetGocuiAttribute gets the gocui color attribute from the string

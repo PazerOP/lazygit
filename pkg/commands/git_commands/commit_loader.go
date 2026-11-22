@@ -56,7 +56,7 @@ func NewCommitLoader(
 }
 
 type GetCommitsOptions struct {
-	Limit                bool
+	Limit                int // the maximum number of commits to load, or 0 to load all of them
 	FilterPath           string
 	FilterAuthor         string
 	IncludeRebaseCommits bool
@@ -173,8 +173,13 @@ func (self *CommitLoader) MergeRebasingCommits(hashPool *utils.StringPool, commi
 		addConflictedRebasingCommit = false
 	}
 
+	if workingTreeState.ApplyingPatches {
+		result = append(self.getPendingPatches(hashPool), result...)
+		addConflictedRebasingCommit = false
+	}
+
 	if workingTreeState.Rebasing {
-		rebasingCommits, err := self.getHydratedRebasingCommits(hashPool, addConflictedRebasingCommit)
+		rebasingCommits, err := self.getHydratedRebasingCommits(hashPool, commits, addConflictedRebasingCommit)
 		if err != nil {
 			return nil, err
 		}
@@ -251,16 +256,23 @@ func (self *CommitLoader) extractCommitFromLine(hashPool *utils.StringPool, line
 	})
 }
 
-func (self *CommitLoader) getHydratedRebasingCommits(hashPool *utils.StringPool, addConflictingCommit bool) ([]*models.Commit, error) {
-	return self.getHydratedTodoCommits(hashPool, self.getRebasingCommits(hashPool, addConflictingCommit), false)
+func (self *CommitLoader) getHydratedRebasingCommits(hashPool *utils.StringPool, existingCommits []*models.Commit, addConflictingCommit bool) ([]*models.Commit, error) {
+	return self.getHydratedTodoCommits(hashPool, self.getRebasingCommits(hashPool, addConflictingCommit), existingCommits, false)
 }
 
 func (self *CommitLoader) getHydratedSequencerCommits(hashPool *utils.StringPool, workingTreeState models.WorkingTreeState) ([]*models.Commit, error) {
 	commits := self.getSequencerCommits(hashPool)
 	if len(commits) > 0 {
 		// If we have any commits in .git/sequencer/todo, then the last one of
-		// those is the conflicting one.
-		commits[len(commits)-1].Status = models.StatusConflicted
+		// those is the one that git stopped at.
+		switch getCurrentSequencerTodoState(self.cmd, self.repoPaths.WorktreeGitDirPath()) {
+		case sequencerTodoStarted:
+			commits[len(commits)-1].Status = models.StatusConflicted
+		case sequencerTodoNotStarted:
+			// It is still pending like the other ones
+		case sequencerTodoCommitted:
+			commits = commits[:len(commits)-1]
+		}
 	} else {
 		// For single-commit cherry-picks and reverts, git apparently doesn't
 		// use the sequencer; in that case, CHERRY_PICK_HEAD or REVERT_HEAD is
@@ -271,39 +283,56 @@ func (self *CommitLoader) getHydratedSequencerCommits(hashPool *utils.StringPool
 		}
 	}
 
-	return self.getHydratedTodoCommits(hashPool, commits, true)
+	return self.getHydratedTodoCommits(hashPool, commits, nil, true)
 }
 
-func (self *CommitLoader) getHydratedTodoCommits(hashPool *utils.StringPool, todoCommits []*models.Commit, todoFileHasShortHashes bool) ([]*models.Commit, error) {
+func (self *CommitLoader) getHydratedTodoCommits(
+	hashPool *utils.StringPool,
+	todoCommits []*models.Commit,
+	existingCommits []*models.Commit,
+	todoFileHasShortHashes bool,
+) ([]*models.Commit, error) {
 	if len(todoCommits) == 0 {
 		return nil, nil
 	}
 
-	commitHashes := lo.FilterMap(todoCommits, func(commit *models.Commit, _ int) (string, bool) {
-		return commit.Hash(), commit.Hash() != ""
-	})
-
-	// note that we're not filtering these as we do non-rebasing commits just because
-	// I suspect that will cause some damage
-	cmdObj := self.cmd.New(
-		NewGitCmd("show").
-			Config("log.showSignature=false").
-			Arg("--no-patch", "--oneline", "--abbrev=20", prettyFormat).
-			Arg(commitHashes...).
-			ToArgv(),
-	).DontLog()
-
+	// A refresh of only the rebasing todos should reuse the already loaded todos to avoid
+	// unnecessary git show calls.
 	fullCommits := map[string]*models.Commit{}
-	err := cmdObj.RunAndProcessLines(func(line string) (bool, error) {
-		if line == "" || line[0] != '+' {
-			return false, nil
+	for _, commit := range existingCommits {
+		if commit.IsTODO() && commit.Hash() != "" {
+			// Make a copy of the commit; that's necessary to avoid mutating the original commit
+			// when we later reuse it in the loop at the end of this function.
+			fullCommits[commit.Hash()] = lo.ToPtr(*commit)
 		}
-		commit := self.extractCommitFromLine(hashPool, line[1:], false)
-		fullCommits[commit.Hash()] = commit
-		return false, nil
+	}
+
+	commitHashesToFetch := lo.FilterMap(todoCommits, func(commit *models.Commit, _ int) (string, bool) {
+		return commit.Hash(), commit.Hash() != "" && fullCommits[commit.Hash()] == nil
 	})
-	if err != nil {
-		return nil, err
+
+	if len(commitHashesToFetch) > 0 {
+		// note that we're not filtering these as we do non-rebasing commits just because
+		// I suspect that will cause some damage
+		cmdObj := self.cmd.New(
+			NewGitCmd("show").
+				Config("log.showSignature=false").
+				Arg("--no-patch", "--oneline", "--abbrev=20", prettyFormat).
+				Arg(commitHashesToFetch...).
+				ToArgv(),
+		).DontLog()
+
+		err := cmdObj.RunAndProcessLines(func(line string) (bool, error) {
+			if line == "" || line[0] != '+' {
+				return false, nil
+			}
+			commit := self.extractCommitFromLine(hashPool, line[1:], false)
+			fullCommits[commit.Hash()] = commit
+			return false, nil
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	findFullCommit := lo.Ternary(todoFileHasShortHashes,
@@ -413,38 +442,7 @@ func (self *CommitLoader) getConflictedCommitImpl(hashPool *utils.StringPool, to
 		return nil
 	}
 
-	// In certain cases, git reschedules commands that failed. One example is if
-	// a patch would overwrite an untracked file (another one is an "exec" that
-	// failed, but we don't care about that here because we dealt with exec
-	// already above). To detect this, compare the last command of the "done"
-	// file against the first command of "git-rebase-todo"; if they are the
-	// same, the command was rescheduled.
-	if len(doneTodos) > 0 && len(todos) > 0 && doneTodos[len(doneTodos)-1] == todos[0] {
-		// Command was rescheduled, no need to display it
-		return nil
-	}
-
-	// Older versions of git have a bug whereby, if a command is rescheduled,
-	// the last successful command is appended to the "done" file again. To
-	// detect this, we need to compare the second-to-last done entry against the
-	// first todo entry, and also compare the last done entry against the
-	// last-but-two done entry; this latter check is needed for the following
-	// case:
-	//   pick A
-	//   exec make test
-	//   pick B
-	//   exec make test
-	// If pick B fails with conflicts, then the "done" file contains
-	//   pick A
-	//   exec make test
-	//   pick B
-	// and git-rebase-todo contains
-	//   exec make test
-	// Without the last condition we would erroneously treat this as the exec
-	// command being rescheduled, so we wouldn't display our fake entry for
-	// "pick B".
-	if len(doneTodos) >= 3 && len(todos) > 0 && doneTodos[len(doneTodos)-2] == todos[0] &&
-		doneTodos[len(doneTodos)-1] == doneTodos[len(doneTodos)-3] {
+	if utils.LastDoneTodoWasRescheduled(doneTodos, todos) {
 		// Command was rescheduled, no need to display it
 		return nil
 	}
@@ -594,7 +592,7 @@ func (self *CommitLoader) getLogCmd(opts GetCommitsOptions) *oscommands.CmdObj {
 		Arg(prettyFormat).
 		Arg("--abbrev=40").
 		ArgIf(opts.FilterAuthor != "", "--author="+opts.FilterAuthor).
-		ArgIf(opts.Limit, "-300").
+		ArgIf(opts.Limit > 0, fmt.Sprintf("-%d", opts.Limit)).
 		ArgIf(opts.FilterPath != "", "--follow", "--name-status").
 		Arg("--no-show-signature").
 		ArgIf(opts.RefToShowDivergenceFrom != "", "--left-right").

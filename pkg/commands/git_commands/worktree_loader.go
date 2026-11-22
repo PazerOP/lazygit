@@ -22,9 +22,6 @@ func NewWorktreeLoader(gitCommon *GitCommon) *WorktreeLoader {
 }
 
 func (self *WorktreeLoader) GetWorktrees() ([]*models.Worktree, error) {
-	currentRepoPath := self.repoPaths.RepoPath()
-	worktreePath := self.repoPaths.WorktreePath()
-
 	cmdArgs := NewGitCmd("worktree").Arg("list", "--porcelain").ToArgv()
 	worktreesOutput, err := self.cmd.New(cmdArgs).DontLog().RunWithOutput()
 	if err != nil {
@@ -54,17 +51,13 @@ func (self *WorktreeLoader) GetWorktrees() ([]*models.Worktree, error) {
 
 		if strings.HasPrefix(splitLine, "worktree ") {
 			path := strings.SplitN(splitLine, " ", 2)[1]
-			isMain := path == currentRepoPath
-			isCurrent := path == worktreePath
-			isPathMissing := self.pathExists(path)
 
 			current = &models.Worktree{
-				IsMain:        isMain,
-				IsCurrent:     isCurrent,
-				IsPathMissing: isPathMissing,
+				IsPathMissing: !self.pathExists(path),
 				Path:          path,
 				// we defer populating GitDir until a loop below so that
-				// we can parallelize the calls to git rev-parse
+				// we can parallelize the calls to git rev-parse, and
+				// IsMain/IsCurrent because they are derived from GitDir
 				GitDir: "",
 			}
 		} else if strings.HasPrefix(splitLine, "HEAD ") {
@@ -84,7 +77,7 @@ func (self *WorktreeLoader) GetWorktrees() ([]*models.Worktree, error) {
 			if worktree.IsPathMissing {
 				return
 			}
-			gitDir, err := callGitRevParseWithDir(self.cmd, worktree.Path, "--absolute-git-dir")
+			gitDir, err := callGitRevParseInOtherRepo(self.cmd, worktree.Path, "--absolute-git-dir")
 			if err != nil {
 				self.Log.Warnf("Could not find git dir for worktree %s: %v", worktree.Path, err)
 				return
@@ -94,6 +87,23 @@ func (self *WorktreeLoader) GetWorktrees() ([]*models.Worktree, error) {
 		})
 	}
 	wg.Wait()
+
+	// Identify the current and the main worktree by their git dir rather than by
+	// their path: `git worktree list` reports the main worktree as the common
+	// git dir with a trailing "/.git" removed, which is the working tree only
+	// when the git dir sits inside it. In a submodule, a bare repo or a repo
+	// using core.worktree it doesn't, and comparing paths then matches nothing.
+	// A worktree whose directory is gone has no git dir to compare, so there we
+	// have nothing better than its path.
+	for _, worktree := range worktrees {
+		if worktree.GitDir != "" {
+			worktree.IsCurrent = worktree.GitDir == self.repoPaths.WorktreeGitDirPath()
+			worktree.IsMain = worktree.GitDir == self.repoPaths.RepoGitDirPath()
+		} else {
+			worktree.IsCurrent = worktree.Path == self.repoPaths.WorktreePath()
+			worktree.IsMain = worktree.Path == self.repoPaths.RepoPath()
+		}
+	}
 
 	names := getUniqueNamesFromPaths(lo.Map(worktrees, func(worktree *models.Worktree, _ int) string {
 		return worktree.Path
@@ -130,12 +140,14 @@ func (self *WorktreeLoader) GetWorktrees() ([]*models.Worktree, error) {
 		rebasedBranch, ok := self.rebasedBranch(worktree)
 		if ok {
 			worktree.Branch = rebasedBranch
+			worktree.IsRebasingOrBisecting = true
 			continue
 		}
 
 		bisectedBranch, ok := self.bisectedBranch(worktree)
 		if ok {
 			worktree.Branch = bisectedBranch
+			worktree.IsRebasingOrBisecting = true
 			continue
 		}
 	}
@@ -146,12 +158,13 @@ func (self *WorktreeLoader) GetWorktrees() ([]*models.Worktree, error) {
 func (self *WorktreeLoader) pathExists(path string) bool {
 	if _, err := self.Fs.Stat(path); err != nil {
 		if errors.Is(err, iofs.ErrNotExist) {
-			return true
+			return false
 		}
+		// We can't tell, so we don't show the worktree as missing
 		self.Log.Errorf("failed to check if worktree path `%s` exists\n%v", path, err)
-		return false
+		return true
 	}
-	return false
+	return true
 }
 
 func (self *WorktreeLoader) rebasedBranch(worktree *models.Worktree) (string, bool) {
@@ -223,9 +236,16 @@ func getUniqueNamesFromPathsAux(paths []pathWithIndexT, depth int) []nameWithInd
 
 	result := []nameWithIndexT{}
 	for _, group := range groups {
-		if len(group) == 1 {
-			path := group[0]
-			result = append(result, nameWithIndexT{index: path.index, name: sliceAtDepth(path.path, depth)})
+		// Identical paths can't be told apart at any depth, so they are named
+		// like a single path. Git reports two worktrees with the same path when
+		// a worktree directory was deleted and another worktree was moved to
+		// its place.
+		if lo.EveryBy(group, func(path pathWithIndexT) bool {
+			return trimSlashes(path.path) == trimSlashes(group[0].path)
+		}) {
+			for _, path := range group {
+				result = append(result, nameWithIndexT{index: path.index, name: sliceAtDepth(path.path, depth)})
+			}
 		} else {
 			result = append(result, getUniqueNamesFromPathsAux(group, depth+1)...)
 		}
@@ -236,11 +256,8 @@ func getUniqueNamesFromPathsAux(paths []pathWithIndexT, depth int) []nameWithInd
 
 // if the path is /a/b/c/d, and the depth is 0, the value is 'd'. If the depth is 1, the value is 'c', etc
 func valueAtDepth(path string, depth int) string {
-	path = strings.TrimPrefix(path, "/")
-	path = strings.TrimSuffix(path, "/")
-
 	// Split the path into segments
-	segments := strings.Split(path, "/")
+	segments := strings.Split(trimSlashes(path), "/")
 
 	// Get the length of segments
 	length := len(segments)
@@ -256,11 +273,8 @@ func valueAtDepth(path string, depth int) string {
 
 // if the path is /a/b/c/d, and the depth is 0, the value is 'd'. If the depth is 1, the value is 'b/c', etc
 func sliceAtDepth(path string, depth int) string {
-	path = strings.TrimPrefix(path, "/")
-	path = strings.TrimSuffix(path, "/")
-
 	// Split the path into segments
-	segments := strings.Split(path, "/")
+	segments := strings.Split(trimSlashes(path), "/")
 
 	// Get the length of segments
 	length := len(segments)
@@ -272,4 +286,9 @@ func sliceAtDepth(path string, depth int) string {
 
 	// Join the segments from the specified depth till end of the path
 	return strings.Join(segments[length-1-depth:], "/")
+}
+
+func trimSlashes(path string) string {
+	path = strings.TrimPrefix(path, "/")
+	return strings.TrimSuffix(path, "/")
 }

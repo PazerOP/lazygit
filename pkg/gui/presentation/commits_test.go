@@ -1,7 +1,6 @@
 package presentation
 
 import (
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +10,9 @@ import (
 	"github.com/jesseduffield/lazygit/pkg/commands/git_commands"
 	"github.com/jesseduffield/lazygit/pkg/commands/models"
 	"github.com/jesseduffield/lazygit/pkg/common"
+	"github.com/jesseduffield/lazygit/pkg/gui/presentation/authors"
+	"github.com/jesseduffield/lazygit/pkg/gui/presentation/graph"
+	"github.com/jesseduffield/lazygit/pkg/gui/style"
 	"github.com/jesseduffield/lazygit/pkg/utils"
 	"github.com/samber/lo"
 	"github.com/stefanhaller/git-todo-parser/todo"
@@ -18,8 +20,13 @@ import (
 	"github.com/xo/terminfo"
 )
 
+// Scenarios write their expected output as a raw string literal, indented with
+// tabs so that it lines up with the surrounding code. Strip that indentation,
+// along with the newlines after the opening backtick and before the closing
+// one. Spaces are left alone, so that a scenario can expect a line that starts
+// with an empty column.
 func formatExpected(expected string) string {
-	return strings.TrimSpace(strings.ReplaceAll(expected, "\t", ""))
+	return strings.Trim(strings.ReplaceAll(expected, "\t", ""), "\n")
 }
 
 func TestGetCommitListDisplayStrings(t *testing.T) {
@@ -120,6 +127,37 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 						`),
 		},
 		{
+			testName: "don't show branch heads of branches merged into a local main branch",
+			commitOpts: []models.NewCommitOpts{
+				{Name: "commit1", Hash: "hash1", Parents: []string{"hash2"}},
+				{Name: "commit2", Hash: "hash2", Parents: []string{"hash3"}},
+				{Name: "commit3", Hash: "hash3", Parents: []string{"hash4"}},
+				{Name: "commit4", Hash: "hash4", Parents: []string{"hash5"}},
+				{Name: "commit5", Hash: "hash5", Status: models.StatusMerged},
+			},
+			branches: []*models.Branch{
+				{Name: "current-branch", CommitHash: "hash1", Head: true},
+				{Name: "other-branch", CommitHash: "hash2", Head: false},
+				{Name: "master", CommitHash: "hash3", Head: false},
+				{Name: "merged-into-local-master", CommitHash: "hash4", Head: false},
+			},
+			currentBranchName:         "current-branch",
+			hasUpdateRefConfig:        true,
+			startIdx:                  0,
+			endIdx:                    5,
+			showGraph:                 false,
+			bisectInfo:                git_commands.NewNullBisectInfo(),
+			cherryPickedCommitHashSet: set.New[string](),
+			now:                       time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
+			expected: formatExpected(`
+		hash1 commit1
+		hash2 * commit2
+		hash3 commit3
+		hash4 commit4
+		hash5 commit5
+						`),
+		},
+		{
 			testName: "show local branch head for head commit if updateRefs is on",
 			commitOpts: []models.NewCommitOpts{
 				{Name: "commit1", Hash: "hash1"},
@@ -203,11 +241,11 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 			cherryPickedCommitHashSet: set.New[string](),
 			now:                       time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
 			expected: formatExpected(`
-		hash1 ⏣─╮ commit1
-		hash2 ◯ │ commit2
-		hash3 ◯─╯ commit3
-		hash4 ◯ commit4
-		hash5 ◯ commit5
+		hash1 ◎─╮ commit1
+		hash2 ○ │ commit2
+		hash3 ○─╯ commit3
+		hash4 ○ commit4
+		hash5 ○ commit5
 						`),
 		},
 		{
@@ -228,9 +266,9 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 			expected: formatExpected(`
 		hash1 pick commit1
 		hash2 pick commit2
-		hash3      ◯ commit3
-		hash4      ◯ commit4
-		hash5      ◯ commit5
+		hash3      ○ commit3
+		hash4      ○ commit4
+		hash5      ○ commit5
 				`),
 		},
 		{
@@ -250,9 +288,9 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 			now:                       time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
 			expected: formatExpected(`
 		hash2 pick commit2
-		hash3      ◯ commit3
-		hash4      ◯ commit4
-		hash5      ◯ commit5
+		hash3      ○ commit3
+		hash4      ○ commit4
+		hash5      ○ commit5
 				`),
 		},
 		{
@@ -271,8 +309,8 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 			cherryPickedCommitHashSet: set.New[string](),
 			now:                       time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
 			expected: formatExpected(`
-		hash4 ◯ commit4
-		hash5 ◯ commit5
+		hash4      ○ commit4
+		hash5      ○ commit5
 				`),
 		},
 		{
@@ -311,7 +349,7 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 			cherryPickedCommitHashSet: set.New[string](),
 			now:                       time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
 			expected: formatExpected(`
-			hash5 ◯ commit5
+			hash5 ○ commit5
 				`),
 		},
 		{
@@ -335,6 +373,25 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 				`),
 		},
 		{
+			testName: "only showing TODO commits that have no hash",
+			commitOpts: []models.NewCommitOpts{
+				{Name: "refs/heads/branch1", Action: todo.UpdateRef},
+				{Name: "refs/heads/branch2", Action: todo.UpdateRef},
+				{Name: "commit1", Hash: "hash1", Parents: []string{"hash2"}, Action: todo.Pick},
+				{Name: "commit2", Hash: "hash2", Parents: []string{"hash3"}},
+			},
+			startIdx:                  0,
+			endIdx:                    2,
+			showGraph:                 false,
+			bisectInfo:                git_commands.NewNullBisectInfo(),
+			cherryPickedCommitHashSet: set.New[string](),
+			now:                       time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
+			expected: formatExpected(`
+		      update-ref branch1
+		      update-ref branch2
+				`),
+		},
+		{
 			testName: "graph in divergence view - all commits visible",
 			commitOpts: []models.NewCommitOpts{
 				{Name: "commit1", Hash: "hash1r", Parents: []string{"hash2r"}, Divergence: models.DivergenceRight},
@@ -353,14 +410,14 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 			cherryPickedCommitHashSet: set.New[string](),
 			now:                       time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
 			expected: formatExpected(`
-		↓ hash1r ◯ commit1
-		↓ hash2r ⏣─╮ commit2
-		↓ hash3r ◯ │ commit3
-		↑ hash1l ◯ commit1
-		↑ hash2l ⏣─╮ commit2
-		↑ hash3l ◯ │ commit3
-		↑ hash4l ◯─╯ commit4
-		↑ hash5l ◯ commit5
+		↓ hash1r ○ commit1
+		↓ hash2r ◎─╮ commit2
+		↓ hash3r ○ │ commit3
+		↑ hash1l ○ commit1
+		↑ hash2l ◎─╮ commit2
+		↑ hash3l ○ │ commit3
+		↑ hash4l ○─╯ commit4
+		↑ hash5l ○ commit5
 				`),
 		},
 		{
@@ -382,12 +439,12 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 			cherryPickedCommitHashSet: set.New[string](),
 			now:                       time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
 			expected: formatExpected(`
-		↓ hash3r ◯ │ commit3
-		↑ hash1l ◯ commit1
-		↑ hash2l ⏣─╮ commit2
-		↑ hash3l ◯ │ commit3
-		↑ hash4l ◯─╯ commit4
-		↑ hash5l ◯ commit5
+		↓ hash3r ○ │ commit3
+		↑ hash1l ○ commit1
+		↑ hash2l ◎─╮ commit2
+		↑ hash3l ○ │ commit3
+		↑ hash4l ○─╯ commit4
+		↑ hash5l ○ commit5
 				`),
 		},
 		{
@@ -409,11 +466,11 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 			cherryPickedCommitHashSet: set.New[string](),
 			now:                       time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
 			expected: formatExpected(`
-		↓ hash1r ◯ commit1
-		↓ hash2r ⏣─╮ commit2
-		↓ hash3r ◯ │ commit3
-		↑ hash1l ◯ commit1
-		↑ hash2l ⏣─╮ commit2
+		↓ hash1r ○ commit1
+		↓ hash2r ◎─╮ commit2
+		↓ hash3r ○ │ commit3
+		↑ hash1l ○ commit1
+		↑ hash2l ◎─╮ commit2
 				`),
 		},
 		{
@@ -435,10 +492,10 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 			cherryPickedCommitHashSet: set.New[string](),
 			now:                       time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
 			expected: formatExpected(`
-		↑ hash2l ⏣─╮ commit2
-		↑ hash3l ◯ │ commit3
-		↑ hash4l ◯─╯ commit4
-		↑ hash5l ◯ commit5
+		↑ hash2l ◎─╮ commit2
+		↑ hash3l ○ │ commit3
+		↑ hash4l ○─╯ commit4
+		↑ hash5l ○ commit5
 				`),
 		},
 		{
@@ -460,8 +517,8 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 			cherryPickedCommitHashSet: set.New[string](),
 			now:                       time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
 			expected: formatExpected(`
-		↓ hash1r ◯ commit1
-		↓ hash2r ⏣─╮ commit2
+		↓ hash1r ○ commit1
+		↓ hash2r ◎─╮ commit2
 				`),
 		},
 		{
@@ -480,11 +537,11 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 			cherryPickedCommitHashSet: set.New[string](),
 			now:                       time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
 			expected: formatExpected(`
-		↑ hash1l ◯ commit1
-		↑ hash2l ⏣─╮ commit2
-		↑ hash3l ◯ │ commit3
-		↑ hash4l ◯─╯ commit4
-		↑ hash5l ◯ commit5
+		↑ hash1l ○ commit1
+		↑ hash2l ◎─╮ commit2
+		↑ hash3l ○ │ commit3
+		↑ hash4l ○─╯ commit4
+		↑ hash5l ○ commit5
 				`),
 		},
 		{
@@ -501,9 +558,9 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 			cherryPickedCommitHashSet: set.New[string](),
 			now:                       time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
 			expected: formatExpected(`
-		↓ hash1r ◯ commit1
-		↓ hash2r ⏣─╮ commit2
-		↓ hash3r ◯ │ commit3
+		↓ hash1r ○ commit1
+		↓ hash2r ◎─╮ commit2
+		↓ hash3r ○ │ commit3
 				`),
 		},
 		{
@@ -526,12 +583,29 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 		hash2 2019-12-20 Jesse Duffield    commit2
 						`),
 		},
+		{
+			testName: "only showing commits from today",
+			commitOpts: []models.NewCommitOpts{
+				{Name: "commit1", Hash: "hash1", UnixTimestamp: 1577844184, AuthorName: "Jesse Duffield"},
+				{Name: "commit2", Hash: "hash2", UnixTimestamp: 1576844184, AuthorName: "Jesse Duffield"},
+			},
+			fullDescription:           true,
+			timeFormat:                "2006-01-02",
+			shortTimeFormat:           "3:04PM",
+			startIdx:                  0,
+			endIdx:                    1,
+			showGraph:                 false,
+			bisectInfo:                git_commands.NewNullBisectInfo(),
+			cherryPickedCommitHashSet: set.New[string](),
+			now:                       time.Date(2020, 1, 1, 5, 3, 4, 0, time.UTC),
+			expected: formatExpected(`
+		hash1 2:03AM     Jesse Duffield    commit1
+						`),
+		},
 	}
 
 	oldColorLevel := color.ForceSetColorLevel(terminfo.ColorLevelNone)
 	defer color.ForceSetColorLevel(oldColorLevel)
-
-	os.Setenv("TZ", "UTC")
 
 	focusing := false
 	for _, scenario := range scenarios {
@@ -568,6 +642,7 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 					s.startIdx,
 					s.endIdx,
 					s.showGraph,
+					graph.BoxDrawingSymbols,
 					s.bisectInfo,
 				)
 
@@ -579,4 +654,25 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestGraphColorsFollowTheAuthorColors(t *testing.T) {
+	oldColorLevel := color.ForceSetColorLevel(terminfo.ColorLevelMillions)
+	defer color.ForceSetColorLevel(oldColorLevel)
+	t.Cleanup(func() { authors.SetCustomAuthors(nil) })
+
+	hashPool := &utils.StringPool{}
+	commits := []*models.Commit{
+		models.NewCommit(hashPool, models.NewCommitOpts{Hash: "authorcolors1", AuthorName: "Jane Doe", Parents: []string{"authorcolors2"}}),
+		models.NewCommit(hashPool, models.NewCommitOpts{Hash: "authorcolors2", AuthorName: "Jane Doe"}),
+	}
+	renderGraph := func() string {
+		return strings.Join(graph.RenderAux(loadPipesets(commits), commits, nil, graph.BoxDrawingSymbols), "\n")
+	}
+
+	authors.SetCustomAuthors(map[string]string{"Jane Doe": "red"})
+	assert.Contains(t, renderGraph(), style.FgRed.Sprint("○"))
+
+	authors.SetCustomAuthors(map[string]string{"Jane Doe": "blue"})
+	assert.Contains(t, renderGraph(), style.FgBlue.Sprint("○"))
 }

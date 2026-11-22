@@ -1,18 +1,15 @@
 package controllers
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/jesseduffield/gocui"
 	"github.com/jesseduffield/lazygit/pkg/constants"
+	"github.com/jesseduffield/lazygit/pkg/gocui"
 	"github.com/jesseduffield/lazygit/pkg/gui/presentation"
-	"github.com/jesseduffield/lazygit/pkg/gui/style"
 	"github.com/jesseduffield/lazygit/pkg/gui/types"
 	"github.com/jesseduffield/lazygit/pkg/utils"
-	"github.com/samber/lo"
 )
 
 type StatusController struct {
@@ -34,37 +31,31 @@ func NewStatusController(
 func (self *StatusController) GetKeybindings(opts types.KeybindingsOpts) []*types.Binding {
 	bindings := []*types.Binding{
 		{
-			Key:         opts.GetKey(opts.Config.Universal.OpenFile),
-			Handler:     self.openConfig,
-			Description: self.c.Tr.OpenConfig,
-			Tooltip:     self.c.Tr.OpenFileTooltip,
-		},
-		{
-			Key:             opts.GetKey(opts.Config.Universal.Edit),
+			Keys:            opts.GetKeys(opts.Config.Universal.Edit),
 			Handler:         self.editConfig,
 			Description:     self.c.Tr.EditConfig,
 			Tooltip:         self.c.Tr.EditFileTooltip,
 			DisplayOnScreen: true,
 		},
 		{
-			Key:             opts.GetKey(opts.Config.Status.CheckForUpdate),
+			Keys:            opts.GetKeys(opts.Config.Status.CheckForUpdate),
 			Handler:         self.handleCheckForUpdate,
 			Description:     self.c.Tr.CheckForUpdate,
 			DisplayOnScreen: true,
 		},
 		{
-			Key:             opts.GetKey(opts.Config.Status.RecentRepos),
+			Keys:            opts.GetKeys(opts.Config.Status.RecentRepos),
 			Handler:         self.c.Helpers().Repos.CreateRecentReposMenu,
 			Description:     self.c.Tr.SwitchRepo,
 			DisplayOnScreen: true,
 		},
 		{
-			Key:         opts.GetKey(opts.Config.Status.AllBranchesLogGraph),
+			Keys:        opts.GetKeys(opts.Config.Status.AllBranchesLogGraph),
 			Handler:     func() error { self.switchToOrRotateAllBranchesLogs(); return nil },
 			Description: self.c.Tr.AllBranchesLogGraph,
 		},
 		{
-			Key:         opts.GetKey(opts.Config.Status.AllBranchesLogGraphReverse),
+			Keys:        opts.GetKeys(opts.Config.Status.AllBranchesLogGraphReverse),
 			Handler:     func() error { self.switchToOrRotateAllBranchesLogsBackward(); return nil },
 			Description: self.c.Tr.AllBranchesLogGraphReverse,
 		},
@@ -148,43 +139,13 @@ func lazygitTitle() string {
                |___/ |___/       `
 }
 
-func (self *StatusController) askForConfigFile(action func(file string) error) error {
-	confPaths := self.c.GetConfig().GetUserConfigPaths()
-	switch len(confPaths) {
-	case 0:
-		return errors.New(self.c.Tr.NoConfigFileFoundErr)
-	case 1:
-		return action(confPaths[0])
-	default:
-		menuItems := lo.Map(confPaths, func(path string, _ int) *types.MenuItem {
-			return &types.MenuItem{
-				Label: path,
-				OnPress: func() error {
-					return action(path)
-				},
-			}
-		})
-
-		return self.c.Menu(types.CreateMenuOptions{
-			Title: self.c.Tr.SelectConfigFile,
-			Items: menuItems,
-		})
-	}
-}
-
-func (self *StatusController) openConfig() error {
-	return self.askForConfigFile(self.c.Helpers().Files.OpenFile)
-}
-
 func (self *StatusController) editConfig() error {
-	return self.askForConfigFile(func(file string) error {
-		return self.c.Helpers().Files.EditFiles([]string{file})
-	})
+	return (&EditConfigAction{c: self.c}).Call()
 }
 
 func (self *StatusController) showAllBranchLogs() {
 	cmdObj := self.c.Git().Branch.AllBranchesLogCmdObj()
-	task := types.NewRunPtyTask(cmdObj.GetCmd())
+	task := types.NewRunDiffRendererTask(cmdObj.GetCmd())
 
 	title := self.c.Tr.LogTitle
 	if i, n := self.c.Git().Branch.GetAllBranchesLogIdxAndCount(); n > 1 {
@@ -242,7 +203,6 @@ func (self *StatusController) showDashboard() {
 			fmt.Sprintf("Tutorial: %s", constants.Links.Docs.Tutorial),
 			fmt.Sprintf("Raise an Issue: %s", constants.Links.Issues),
 			fmt.Sprintf("Release Notes: %s", constants.Links.Releases),
-			style.FgMagenta.Sprintf("Become a sponsor: %s", constants.Links.Donate), // caffeine ain't free
 		}, "\n\n") + "\n"
 
 	self.c.RenderToMainViews(types.RefreshMainOpts{

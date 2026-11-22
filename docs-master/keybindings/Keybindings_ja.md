@@ -2,37 +2,37 @@ _This file is auto-generated. To update, make the changes in the pkg/i18n direct
 
 # Lazygit キーバインディング
 
-_凡例：`＜c-b＞` はctrl+b、`＜a-b＞` はalt+b、`B` はshift+bを意味します_
-
 ## グローバルキーバインド
 
 | Key | Action | Info |
 |-----|--------|-------------|
-| `` <c-r> `` | 最近のリポジトリをチェックアウト |  |
-| `` <pgup> (fn+up/shift+k) `` | メインウィンドウを上にスクロール |  |
-| `` <pgdown> (fn+down/shift+j) `` | メインウィンドウを下にスクロール |  |
+| `` <ctrl+r> `` | 最近のリポジトリをチェックアウト |  |
+| `` <pgup>, K, <ctrl+u> (fn+up/shift+k) `` | メインウィンドウを上にスクロール |  |
+| `` <pgdown>, J, <ctrl+d> (fn+down/shift+j) `` | メインウィンドウを下にスクロール |  |
 | `` @ `` | コマンドログオプションを表示 | コマンドログのオプションを表示します（例：コマンドログの表示/非表示、コマンドログへのフォーカスなど）。 |
-| `` P `` | プッシュ | 現在のブランチを対応するアップストリームブランチにプッシュします。アップストリームが設定されていない場合、アップストリームブランチの設定を求められます。 |
-| `` p `` | プル | 現在のブランチのリモートから変更をプルします。アップストリームが設定されていない場合、アップストリームブランチの設定を求められます。 |
+| `` P `` | プッシュ | Push the current branch to its upstream branch. If no upstream is configured, you will be prompted to configure an upstream branch. If other branches are stacked below the current one and have commits to push, you are offered to push those too. |
+| `` p `` | プル | Pull changes from the remote for the current branch. If no upstream is configured, you will be prompted to configure an upstream branch. If other branches are stacked below the current one and have changed on the remote, you are offered to update those too. |
 | `` ) `` | リネーム検出の類似度しきい値を上げる | Increase the similarity threshold for a deletion and addition pair to be treated as a rename.<br><br>The default can be changed in the config file with the key 'git.renameSimilarityThreshold'. |
 | `` ( `` | リネーム検出の類似度しきい値を下げる | Decrease the similarity threshold for a deletion and addition pair to be treated as a rename.<br><br>The default can be changed in the config file with the key 'git.renameSimilarityThreshold'. |
 | `` } `` | 差分コンテキストサイズを増やす | Increase the amount of the context shown around changes in the diff view.<br><br>The default can be changed in the config file with the key 'git.diffContextSize'. |
 | `` { `` | 差分コンテキストサイズを減らす | Decrease the amount of the context shown around changes in the diff view.<br><br>The default can be changed in the config file with the key 'git.diffContextSize'. |
 | `` : `` | シェルコマンドを実行 | 実行するシェルコマンドを入力するプロンプトを表示します。 |
-| `` <c-p> `` | カスタムパッチオプションを表示 |  |
+| `` <ctrl+p> `` | カスタムパッチオプションを表示 |  |
 | `` m `` | マージ/リベースオプションを表示 | 現在のマージ/リベースを中止/継続/スキップするオプションを表示します。 |
 | `` R `` | 更新 | Gitの状態を更新します（`git status`、`git branch`などをバックグラウンドで実行してパネルの内容を更新します）。これは`git fetch`を実行しません。 |
 | `` + `` | 次の画面モード（通常/半分/全画面） |  |
 | `` _ `` | 前の画面モード |  |
-| `` \| `` | Cycle pagers | Choose the next pager in the list of configured pagers |
+| `` \| `` | Cycle diff renderers | Choose the next renderer in the list of configured diff renderers. |
+| `` \ `` | Cycle diff renderers (reverse) | Choose the previous renderer in the list of configured diff renderers. |
+| `` <ctrl+g> `` | Jump to file in diff | Pick one of the files of the diff shown in the main view, and scroll the main view to it. The focus stays in this panel. |
 | `` <esc> `` | キャンセル |  |
 | `` ? `` | キーバインディングメニューを開く |  |
-| `` <c-s> `` | フィルターオプションを表示 | コミットログのフィルタリングオプションを表示し、フィルタに一致するコミットのみを表示します。 |
-| `` W `` | 差分オプションを表示 | ２つのrefの差分に関連するオプションを表示します（例：選択したrefとの差分表示、差分を取るrefの入力、差分方向の反転など）。 |
-| `` <c-e> `` | 差分オプションを表示 | ２つのrefの差分に関連するオプションを表示します（例：選択したrefとの差分表示、差分を取るrefの入力、差分方向の反転など）。 |
-| `` q `` | 終了 |  |
-| `` <c-z> `` | Suspend the application |  |
-| `` <c-w> `` | 空白表示の切り替え | Toggle whether or not whitespace changes are shown in the diff view.<br><br>The default can be changed in the config file with the key 'git.ignoreWhitespaceInDiffView'. |
+| `` <ctrl+s> `` | フィルターオプションを表示 | コミットログのフィルタリングオプションを表示し、フィルタに一致するコミットのみを表示します。 |
+| `` W, <ctrl+e> `` | 差分オプションを表示 | ２つのrefの差分に関連するオプションを表示します（例：選択したrefとの差分表示、差分を取るrefの入力、差分方向の反転など）。 |
+| `` q, <ctrl+c> `` | 終了 |  |
+| `` <ctrl+z> `` | Suspend the application |  |
+| `` <ctrl+w> `` | 空白表示の切り替え | Toggle whether or not whitespace changes are shown in the diff view.<br><br>The default can be changed in the config file with the key 'git.ignoreWhitespaceInDiffView'. |
+| `` <alt+shift+c> `` | 設定ファイルを編集 | 外部エディタでファイルを開きます。 |
 | `` z `` | 元に戻す | 最後のgitコマンドを元に戻すために実行するgitコマンドを決定するためにreflogが使用されます。これにはワーキングツリーへの変更は含まれません。コミットのみが考慮されます。 |
 | `` Z `` | やり直す | 最後のgitコマンドをやり直すために実行するgitコマンドを決定するためにreflogが使用されます。これにはワーキングツリーへの変更は含まれません。コミットのみが考慮されます。 |
 
@@ -42,11 +42,11 @@ _凡例：`＜c-b＞` はctrl+b、`＜a-b＞` はalt+b、`B` はshift+bを意味
 |-----|--------|-------------|
 | `` , `` | 前のページ |  |
 | `` . `` | 次のページ |  |
-| `` < (<home>) `` | 先頭にスクロール |  |
-| `` > (<end>) `` | 末尾にスクロール |  |
+| `` <, <home> `` | 先頭にスクロール |  |
+| `` >, <end> `` | 末尾にスクロール |  |
 | `` v `` | 範囲選択を切り替え |  |
-| `` <s-down> `` | 範囲選択を下に |  |
-| `` <s-up> `` | 範囲選択を上に |  |
+| `` <shift+down> `` | 範囲選択を下に |  |
+| `` <shift+up> `` | 範囲選択を上に |  |
 | `` / `` | 現在のビューをテキストで検索 |  |
 | `` H `` | 左にスクロール |  |
 | `` L `` | 右にスクロール |  |
@@ -64,8 +64,8 @@ _凡例：`＜c-b＞` はctrl+b、`＜a-b＞` はalt+b、`B` はshift+bを意味
 
 | Key | Action | Info |
 |-----|--------|-------------|
-| `` <c-o> `` | Copy abbreviated commit hash to clipboard |  |
-| `` <c-r> `` | コピーされた（チェリーピックされた）コミットの選択をリセット |  |
+| `` <ctrl+o> `` | Copy abbreviated commit hash to clipboard |  |
+| `` <ctrl+r> `` | コピーされた（チェリーピックされた）コミットの選択をリセット |  |
 | `` b `` | bisectオプションを表示 |  |
 | `` s `` | スカッシュ | 選択したコミットをその下のコミットにスカッシュします。スカッシュとは複数のコミットを1つにまとめる操作です。選択したコミットのメッセージが下のコミットに追加されます。 |
 | `` f `` | フィックスアップ | 選択したコミットをその下のコミットにマージします。フィックスアップはスカッシュと似ていますが、選択したコミットのメッセージは破棄され、下のコミットのメッセージのみが保持されます。 |
@@ -78,43 +78,44 @@ _凡例：`＜c-b＞` はctrl+b、`＜a-b＞` はalt+b、`B` はshift+bを意味
 | `` p `` | ピック | 選択したコミットをピックするようにマークします（リベース中）。これは、リベースを続行すると、コミットが保持されることを意味します。 |
 | `` F `` | fixupコミットを作成 | 選択したコミットに対する「fixup!」コミットを作成します。fixupコミットは、選択したコミットの修正用コミットです。後で、同じコミットで `S` を押すと、上記のすべてのfixupコミットが適用されます。 |
 | `` S `` | fixupコミットを適用 | すべての「fixup!」コミットを、選択したコミットの上部または現在のブランチ内のすべてをスカッシュします（autosquash）。 |
-| `` <c-j> `` | コミットを1つ下に移動 |  |
-| `` <c-k> `` | コミットを1つ上に移動 |  |
+| `` <ctrl+j>, <alt+down> `` | コミットを1つ下に移動 |  |
+| `` <ctrl+k>, <alt+up> `` | コミットを1つ上に移動 |  |
 | `` V `` | ペースト（チェリーピック） |  |
 | `` B `` | リベース用のベースコミットとしてマーク | 次のリベース用のベースコミットを選択します。ブランチにリベースするとき、ベースコミットより上のコミットのみが持ち込まれます。これは `git rebase --onto` コマンドを使用します。 |
 | `` A `` | 修正 | ステージされた変更でコミットを修正します。選択したコミットがHEADコミットの場合、これは `git commit --amend` を実行します。それ以外の場合、コミットはリベースを通じて修正されます。 |
 | `` a `` | コミット属性を修正 | コミット作者の設定/リセットまたは共同作者の設定を行います。 |
 | `` t `` | リバート | 選択したコミットの変更を逆に適用する、リバートコミットを作成します。 |
 | `` T `` | コミットにタグを付ける | 選択したコミットを指すタグを新規作成します。タグ名とオプションの説明を入力するよう促されます。 |
-| `` <c-l> `` | ログオプションを表示 | コミットログのオプションを表示します（例：並び順の変更、Gitグラフの非表示、Gitグラフ全体の表示）。 |
+| `` <ctrl+l> `` | ログオプションを表示 | コミットログのオプションを表示します（例：並び順の変更、Gitグラフの非表示、Gitグラフ全体の表示）。 |
+| `` G `` | Open pull request in browser |  |
 | `` <space> `` | チェックアウト（ブランチの切り替え） | 選択したコミットをデタッチドヘッド（特定のブランチに属さない状態）としてチェックアウトします。 |
 | `` y `` | コミット属性をクリップボードにコピー | コミット属性をクリップボードにコピーします（例：ハッシュ、URL、差分、メッセージ、作者）。 |
 | `` o `` | ブラウザでコミットを開く |  |
 | `` n `` | コミットから新しいブランチを作成 |  |
 | `` N `` | コミットを新しいブランチに移動 | Create a new branch and move the unpushed commits of the current branch to it. Useful if you meant to start new work and forgot to create a new branch first.<br><br>Note that this disregards the selection, the new branch is always created either from the main branch or stacked on top of the current branch (you get to choose which). |
+| `` w `` | 新しいワークツリー |  |
 | `` g `` | リセット | 選択した項目へのリセットオプション（ソフト/ミックス/ハード）を表示します。各リセットタイプの詳細は次の通りです：<br>- ソフトリセット：変更を保持し、ステージされた状態にします<br>- ミックスリセット：変更を保持し、ステージされていない状態にします<br>- ハードリセット：すべての変更を破棄します |
 | `` C `` | コピー（チェリーピック） | コミットをコピーとしてマークします。ローカルコミットビューで `V` を押すと、コピーしたコミットをチェックアウトしたブランチにペースト（チェリーピック）できます。いつでも `<esc>` を押して選択をキャンセルできます。 |
-| `` <c-t> `` | 外部差分ツールを開く（git difftool） |  |
+| `` <ctrl+t> `` | 外部差分ツールを開く（git difftool） |  |
 | `` * `` | 現在のブランチのコミットを選択 |  |
 | `` 0 `` | メインビューにフォーカス |  |
 | `` <enter> `` | ファイルを表示 |  |
-| `` w `` | ワークツリーオプションを表示 |  |
 | `` / `` | 現在のビューをテキストで検索 |  |
 
 ## コミットファイル
 
 | Key | Action | Info |
 |-----|--------|-------------|
-| `` <c-o> `` | パスをクリップボードにコピー |  |
+| `` <ctrl+o> `` | パスをクリップボードにコピー |  |
 | `` y `` | クリップボードにコピー |  |
 | `` c `` | チェックアウト（ブランチの切り替え） | ファイルをチェックアウトします。これにより、作業ツリー内のファイルが選択したコミットのバージョンに置き換えられます。 |
 | `` d `` | 破棄 | このコミットのこのファイルへの変更を破棄します。これはバックグラウンドで対話的なリベースを実行するため、後のコミットでもこのファイルが変更されている場合、マージコンフリクトが発生する可能性があります。 |
 | `` o `` | ファイルを開く | デフォルトのアプリケーションでファイルを開きます。 |
 | `` e `` | 編集 | 外部エディタでファイルを開きます。 |
-| `` <c-t> `` | 外部差分ツールを開く（git difftool） |  |
+| `` <ctrl+t> `` | 外部差分ツールを開く（git difftool） |  |
 | `` <space> `` | パッチに含めるファイルを切り替え | ファイルがカスタムパッチに含まれるかどうかを切り替えます。https://github.com/jesseduffield/lazygit#rebase-magic-custom-patchesを参照してください。 |
 | `` a `` | すべてのファイルを切り替え | コミットのすべてのファイルをカスタムパッチに追加/削除します。https://github.com/jesseduffield/lazygit#rebase-magic-custom-patchesを参照してください。 |
-| `` <enter> `` | ファイルに入る / ディレクトリの折りたたみを切り替える | ファイルが選択されている場合、そのファイルに入ってカスタムパッチに個々の行を追加/削除できます。ディレクトリが選択されている場合、ディレクトリを切り替えます。 |
+| `` <enter> `` | Focus file diff / Toggle directory | If a file is selected, focus its diff so you can act on individual lines. If it is a directory, collapse or expand it. |
 | `` ` `` | ファイルツリービューを切り替え | ファイル表示をフラット表示とツリー表示で切り替えます。フラット表示はすべてのファイルパスを一覧で表示し、ツリー表示はディレクトリごとにファイルをグループ化します。<br><br>デフォルトは設定ファイル内の 'gui.showFileTree' キーで変更できます。 |
 | `` - `` | すべてのファイルを折りたたむ | ファイルツリー内のすべてのディレクトリを折りたたみます |
 | `` = `` | すべてのファイルを展開 | ファイルツリー内のすべてのディレクトリを展開します |
@@ -132,27 +133,28 @@ _凡例：`＜c-b＞` はctrl+b、`＜a-b＞` はalt+b、`B` はshift+bを意味
 
 | Key | Action | Info |
 |-----|--------|-------------|
-| `` <c-o> `` | Copy abbreviated commit hash to clipboard |  |
+| `` <ctrl+o> `` | Copy abbreviated commit hash to clipboard |  |
+| `` b `` | bisectオプションを表示 |  |
 | `` <space> `` | チェックアウト（ブランチの切り替え） | 選択したコミットをデタッチドヘッド（特定のブランチに属さない状態）としてチェックアウトします。 |
 | `` y `` | コミット属性をクリップボードにコピー | コミット属性をクリップボードにコピーします（例：ハッシュ、URL、差分、メッセージ、作者）。 |
 | `` o `` | ブラウザでコミットを開く |  |
 | `` n `` | コミットから新しいブランチを作成 |  |
 | `` N `` | コミットを新しいブランチに移動 | Create a new branch and move the unpushed commits of the current branch to it. Useful if you meant to start new work and forgot to create a new branch first.<br><br>Note that this disregards the selection, the new branch is always created either from the main branch or stacked on top of the current branch (you get to choose which). |
+| `` w `` | 新しいワークツリー |  |
 | `` g `` | リセット | 選択した項目へのリセットオプション（ソフト/ミックス/ハード）を表示します。各リセットタイプの詳細は次の通りです：<br>- ソフトリセット：変更を保持し、ステージされた状態にします<br>- ミックスリセット：変更を保持し、ステージされていない状態にします<br>- ハードリセット：すべての変更を破棄します |
 | `` C `` | コピー（チェリーピック） | コミットをコピーとしてマークします。ローカルコミットビューで `V` を押すと、コピーしたコミットをチェックアウトしたブランチにペースト（チェリーピック）できます。いつでも `<esc>` を押して選択をキャンセルできます。 |
-| `` <c-r> `` | コピーされた（チェリーピックされた）コミットの選択をリセット |  |
-| `` <c-t> `` | 外部差分ツールを開く（git difftool） |  |
+| `` <ctrl+r> `` | コピーされた（チェリーピックされた）コミットの選択をリセット |  |
+| `` <ctrl+t> `` | 外部差分ツールを開く（git difftool） |  |
 | `` * `` | 現在のブランチのコミットを選択 |  |
 | `` 0 `` | メインビューにフォーカス |  |
 | `` <enter> `` | ファイルを表示 |  |
-| `` w `` | ワークツリーオプションを表示 |  |
 | `` / `` | 現在のビューをテキストで検索 |  |
 
 ## サブモジュール
 
 | Key | Action | Info |
 |-----|--------|-------------|
-| `` <c-o> `` | サブモジュール名をクリップボードにコピー |  |
+| `` <ctrl+o> `` | サブモジュール名をクリップボードにコピー |  |
 | `` <enter> `` | 入る | サブモジュールに入ります。サブモジュールに入った後、`<esc>`を押して親リポジトリに戻ることができます。 |
 | `` d `` | 削除 | 選択したサブモジュールとそれに対応するディレクトリを削除します。 |
 | `` u `` | 更新 | 選択したサブモジュールを更新します。 |
@@ -170,17 +172,16 @@ _凡例：`＜c-b＞` はctrl+b、`＜a-b＞` はalt+b、`B` はshift+bを意味
 | `` g `` | ポップ | スタッシュエントリをワーキングディレクトリに適用し、スタッシュエントリを削除します。 |
 | `` d `` | 削除 | スタッシュリストからスタッシュエントリを削除します。 |
 | `` n `` | 新しいブランチ | 選択したスタッシュエントリから新しいブランチを作成します。これは、スタッシュエントリが作成されたコミットをgitがチェックアウトし、そのコミットから新しいブランチを作成した後、スタッシュエントリを追加のコミットとして新しいブランチに適用することで機能します。 |
+| `` w `` | 新しいワークツリー |  |
 | `` r `` | スタッシュの名前を変更 |  |
 | `` 0 `` | メインビューにフォーカス |  |
 | `` <enter> `` | ファイルを表示 |  |
-| `` w `` | ワークツリーオプションを表示 |  |
 | `` / `` | 現在のビューをテキストでフィルタリング |  |
 
 ## ステータス
 
 | Key | Action | Info |
 |-----|--------|-------------|
-| `` o `` | 設定ファイルを開く | デフォルトのアプリケーションでファイルを開きます。 |
 | `` e `` | 設定ファイルを編集 | 外部エディタでファイルを開きます。 |
 | `` u `` | 更新を確認 |  |
 | `` <enter> `` | 最近のリポジトリをチェックアウト |  |
@@ -192,39 +193,57 @@ _凡例：`＜c-b＞` はctrl+b、`＜a-b＞` はalt+b、`B` はshift+bを意味
 
 | Key | Action | Info |
 |-----|--------|-------------|
-| `` <tab> `` | ビューを切り替え | 他のビュー（ステージされた変更/ステージされていない変更）に切り替えます。 |
+| `` <tab> `` | Switch diff pane | Switch to the other focused diff pane. |
+| `` a `` | ハンクの選択を切り替える | Toggle line-by-line vs. hunk selection mode. |
+| `` v `` | 範囲選択を切り替え |  |
+| `` e `` | ファイルを編集 | 外部エディタでファイルを開きます。 |
+| `` <space> `` | ステージ | 選択された部分のステージ / アンステージを切り替えます。 |
+| `` d `` | 破棄 | ステージされていない変更が選択されている場合、`git reset`を使用して変更を破棄します。ステージされた変更が選択されている場合、変更をアンステージします。 |
+| `` E `` | ハンクを編集 | 選択したハンクを外部エディタで編集します。 |
+| `` <ctrl+o> `` | Copy selected diff lines to clipboard |  |
+| `` <left>, h `` | 前のハンクに移動 |  |
+| `` <right>, l `` | 次のハンクに移動 |  |
+| `` N `` | Go to previous file |  |
+| `` n `` | Go to next file |  |
+| `` <ctrl+g> `` | Jump to file |  |
+| `` G `` | Open pull request at selected line | Open the branch's pull request in your browser, at the line the selection is on, so that you can comment on it there. Only pull requests on GitHub are found. |
 | `` <esc> `` | サイドパネルに戻る |  |
+| `` c `` | コミット | ステージされた変更をコミットします。 |
+| `` w `` | pre-commitフックなしで変更をコミット |  |
+| `` C `` | Gitエディタを使用して変更をコミット |  |
+| `` <ctrl+f> `` | フィックスアップのベースコミットを検索 | 現在の変更が基づいているコミットを見つけて、コミットの修正/フィックスアップを行います。これにより、ブランチのコミットを一つずつ確認して、どのコミットを修正/フィックスアップすべきかを調べる手間が省けます。詳細はドキュメントを参照: <https://github.com/jesseduffield/lazygit/tree/master/docs/Fixup_Commits.md> |
 | `` / `` | 現在のビューをテキストで検索 |  |
 
 ## タグ
 
 | Key | Action | Info |
 |-----|--------|-------------|
-| `` <c-o> `` | タグをクリップボードにコピー |  |
+| `` <ctrl+o> `` | タグをクリップボードにコピー |  |
+| `` b `` | bisectオプションを表示 |  |
 | `` <space> `` | チェックアウト（ブランチの切り替え） | 選択したタグをデタッチドHEADとしてチェックアウトします。 |
 | `` n `` | 新しいタグを作成 | 現在のコミットから新しいタグを作成します。タグ名とオプションの説明を入力するよう促されます。 |
+| `` w `` | 新しいワークツリー |  |
 | `` d `` | 削除 | ローカル/リモートタグの削除オプションを表示します。 |
 | `` P `` | タグをプッシュ | 選択したタグをリモートにプッシュします。リモートを選択するよう促されます。 |
 | `` g `` | リセット | 選択した項目へのリセットオプション（ソフト/ミックス/ハード）を表示します。各リセットタイプの詳細は次の通りです：<br>- ソフトリセット：変更を保持し、ステージされた状態にします<br>- ミックスリセット：変更を保持し、ステージされていない状態にします<br>- ハードリセット：すべての変更を破棄します |
-| `` <c-t> `` | 外部差分ツールを開く（git difftool） |  |
+| `` <ctrl+t> `` | 外部差分ツールを開く（git difftool） |  |
 | `` 0 `` | メインビューにフォーカス |  |
 | `` <enter> `` | コミットを表示 |  |
-| `` w `` | ワークツリーオプションを表示 |  |
 | `` / `` | 現在のビューをテキストでフィルタリング |  |
 
 ## ファイル
 
 | Key | Action | Info |
 |-----|--------|-------------|
-| `` <c-o> `` | パスをクリップボードにコピー |  |
+| `` <ctrl+o> `` | パスをクリップボードにコピー |  |
 | `` <space> `` | ステージ | 選択したファイルのステージ状態を切り替えます。 |
-| `` <c-b> `` | ステータスでファイルをフィルタリング |  |
+| `` <ctrl+b> `` | ステータスでファイルをフィルタリング |  |
 | `` y `` | クリップボードにコピー |  |
 | `` c `` | コミット | ステージされた変更をコミットします。 |
 | `` w `` | pre-commitフックなしで変更をコミット |  |
 | `` A `` | 直前のコミットを修正 |  |
 | `` C `` | Gitエディタを使用して変更をコミット |  |
-| `` <c-f> `` | フィックスアップのベースコミットを検索 | 現在の変更が基づいているコミットを見つけて、コミットの修正/フィックスアップを行います。これにより、ブランチのコミットを一つずつ確認して、どのコミットを修正/フィックスアップすべきかを調べる手間が省けます。詳細はドキュメントを参照: <https://github.com/jesseduffield/lazygit/tree/master/docs/Fixup_Commits.md> |
+| `` <ctrl+f> `` | フィックスアップのベースコミットを検索 | 現在の変更が基づいているコミットを見つけて、コミットの修正/フィックスアップを行います。これにより、ブランチのコミットを一つずつ確認して、どのコミットを修正/フィックスアップすべきかを調べる手間が省けます。詳細はドキュメントを参照: <https://github.com/jesseduffield/lazygit/tree/master/docs/Fixup_Commits.md> |
 | `` e `` | 編集 | 外部エディタでファイルを開きます。 |
 | `` o `` | ファイルを開く | デフォルトのアプリケーションでファイルを開きます。 |
 | `` i `` | ファイルを無視または除外 |  |
@@ -232,12 +251,12 @@ _凡例：`＜c-b＞` はctrl+b、`＜a-b＞` はalt+b、`B` はshift+bを意味
 | `` s `` | スタッシュ | すべての変更をスタッシュします。スタッシュの他のバリエーションについては、スタッシュオプションを表示するキーバインディングを使用してください。 |
 | `` S `` | スタッシュオプションを表示 | スタッシュオプション（すべてをスタッシュ、ステージされた変更をスタッシュ、ステージされていない変更をスタッシュなど）を表示します。 |
 | `` a `` | すべてステージ | ワーキングツリー内のすべてのファイルのステージ/アンステージを切り替えます。 |
-| `` <enter> `` | 行をステージ / ディレクトリを折りたたむ | 選択された項目がファイルの場合、個々のハンク/行をステージできるようにステージングビューにフォーカスします。選択された項目がディレクトリの場合、ディレクトリを折りたたむ/展開します。 |
+| `` <enter> `` | Focus file diff / Collapse directory | If the selected item is a file, focus its diff so you can act on individual hunks or lines. If it is a directory, collapse or expand it. |
 | `` d `` | 破棄 | 選択したファイルの変更を破棄するオプションを表示します。 |
 | `` g `` | アップストリームへのリセットオプションを表示 |  |
 | `` D `` | リセット | 作業ツリーのリセットオプション（例：作業ツリーの完全破棄）を表示します。 |
 | `` ` `` | ファイルツリービューを切り替え | ファイル表示をフラット表示とツリー表示で切り替えます。フラット表示はすべてのファイルパスを一覧で表示し、ツリー表示はディレクトリごとにファイルをグループ化します。<br><br>デフォルトは設定ファイル内の 'gui.showFileTree' キーで変更できます。 |
-| `` <c-t> `` | 外部差分ツールを開く（git difftool） |  |
+| `` <ctrl+t> `` | 外部差分ツールを開く（git difftool） |  |
 | `` M `` | View merge conflict options | View options for resolving merge conflicts. |
 | `` f `` | フェッチ | リモートから変更をフェッチします。 |
 | `` - `` | すべてのファイルを折りたたむ | ファイルツリー内のすべてのディレクトリを折りたたみます |
@@ -245,54 +264,16 @@ _凡例：`＜c-b＞` はctrl+b、`＜a-b＞` はalt+b、`B` はshift+bを意味
 | `` 0 `` | メインビューにフォーカス |  |
 | `` / `` | 現在のビューをテキストでフィルタリング |  |
 
-## メインパネル（ステージング）
-
-| Key | Action | Info |
-|-----|--------|-------------|
-| `` <left> `` | 前のハンクに移動 |  |
-| `` <right> `` | 次のハンクに移動 |  |
-| `` v `` | 範囲選択を切り替え |  |
-| `` a `` | ハンクの選択を切り替える | Toggle line-by-line vs. hunk selection mode. |
-| `` <c-o> `` | 選択したテキストをクリップボードにコピー |  |
-| `` <space> `` | ステージ | 選択された部分のステージ / アンステージを切り替えます。 |
-| `` d `` | 破棄 | ステージされていない変更が選択されている場合、`git reset`を使用して変更を破棄します。ステージされた変更が選択されている場合、変更をアンステージします。 |
-| `` o `` | ファイルを開く | デフォルトのアプリケーションでファイルを開きます。 |
-| `` e `` | ファイルを編集 | 外部エディタでファイルを開きます。 |
-| `` <esc> `` | ファイルパネルに戻る |  |
-| `` <tab> `` | ビューを切り替え | 他のビュー（ステージされた変更/ステージされていない変更）に切り替えます。 |
-| `` E `` | ハンクを編集 | 選択したハンクを外部エディタで編集します。 |
-| `` c `` | コミット | ステージされた変更をコミットします。 |
-| `` w `` | pre-commitフックなしで変更をコミット |  |
-| `` C `` | Gitエディタを使用して変更をコミット |  |
-| `` <c-f> `` | フィックスアップのベースコミットを検索 | 現在の変更が基づいているコミットを見つけて、コミットの修正/フィックスアップを行います。これにより、ブランチのコミットを一つずつ確認して、どのコミットを修正/フィックスアップすべきかを調べる手間が省けます。詳細はドキュメントを参照: <https://github.com/jesseduffield/lazygit/tree/master/docs/Fixup_Commits.md> |
-| `` / `` | 現在のビューをテキストで検索 |  |
-
-## メインパネル（パッチ作成）
-
-| Key | Action | Info |
-|-----|--------|-------------|
-| `` <left> `` | 前のハンクに移動 |  |
-| `` <right> `` | 次のハンクに移動 |  |
-| `` v `` | 範囲選択を切り替え |  |
-| `` a `` | ハンクの選択を切り替える | Toggle line-by-line vs. hunk selection mode. |
-| `` <c-o> `` | 選択したテキストをクリップボードにコピー |  |
-| `` o `` | ファイルを開く | デフォルトのアプリケーションでファイルを開きます。 |
-| `` e `` | ファイルを編集 | 外部エディタでファイルを開きます。 |
-| `` <space> `` | パッチ内の行を切り替え |  |
-| `` d `` | Remove lines from commit | Remove the selected lines from this commit. This runs an interactive rebase in the background, so you may get a merge conflict if a later commit also changes these lines. |
-| `` <esc> `` | カスタムパッチビルダーを終了 |  |
-| `` / `` | 現在のビューをテキストで検索 |  |
-
 ## メインパネル（マージ中）
 
 | Key | Action | Info |
 |-----|--------|-------------|
 | `` <space> `` | ハンクを選択 |  |
-| `` b `` | すべてのハンクを選択 |  |
-| `` <up> `` | 前のハンク |  |
-| `` <down> `` | 次のハンク |  |
-| `` <left> `` | 前のコンフリクト |  |
-| `` <right> `` | 次のコンフリクト |  |
+| `` b `` | Pick both hunks |  |
+| `` <up>, k `` | 前のハンク |  |
+| `` <down>, j `` | 次のハンク |  |
+| `` <left>, h `` | 前のコンフリクト |  |
+| `` <right>, l `` | 次のコンフリクト |  |
 | `` z `` | 元に戻す | 最後のマージコンフリクト解決を元に戻します。 |
 | `` e `` | ファイルを編集 | 外部エディタでファイルを開きます。 |
 | `` o `` | ファイルを開く | デフォルトのアプリケーションでファイルを開きます。 |
@@ -303,10 +284,27 @@ _凡例：`＜c-b＞` はctrl+b、`＜a-b＞` はalt+b、`B` はshift+bを意味
 
 | Key | Action | Info |
 |-----|--------|-------------|
-| `` mouse wheel down (fn+up) `` | 下にスクロール |  |
-| `` mouse wheel up (fn+down) `` | 上にスクロール |  |
-| `` <tab> `` | ビューを切り替え | 他のビュー（ステージされた変更/ステージされていない変更）に切り替えます。 |
+| `` <mouse wheel down> (fn+up) `` | 下にスクロール |  |
+| `` <mouse wheel up> (fn+down) `` | 上にスクロール |  |
+| `` <tab> `` | Switch diff pane | Switch to the other focused diff pane. |
+| `` a `` | ハンクの選択を切り替える | Toggle line-by-line vs. hunk selection mode. |
+| `` v `` | 範囲選択を切り替え |  |
+| `` e `` | ファイルを編集 | 外部エディタでファイルを開きます。 |
+| `` <space> `` | ステージ | 選択された部分のステージ / アンステージを切り替えます。 |
+| `` d `` | 破棄 | ステージされていない変更が選択されている場合、`git reset`を使用して変更を破棄します。ステージされた変更が選択されている場合、変更をアンステージします。 |
+| `` E `` | ハンクを編集 | 選択したハンクを外部エディタで編集します。 |
+| `` <ctrl+o> `` | Copy selected diff lines to clipboard |  |
+| `` <left>, h `` | 前のハンクに移動 |  |
+| `` <right>, l `` | 次のハンクに移動 |  |
+| `` N `` | Go to previous file |  |
+| `` n `` | Go to next file |  |
+| `` <ctrl+g> `` | Jump to file |  |
+| `` G `` | Open pull request at selected line | Open the branch's pull request in your browser, at the line the selection is on, so that you can comment on it there. Only pull requests on GitHub are found. |
 | `` <esc> `` | サイドパネルに戻る |  |
+| `` c `` | コミット | ステージされた変更をコミットします。 |
+| `` w `` | pre-commitフックなしで変更をコミット |  |
+| `` C `` | Gitエディタを使用して変更をコミット |  |
+| `` <ctrl+f> `` | フィックスアップのベースコミットを検索 | 現在の変更が基づいているコミットを見つけて、コミットの修正/フィックスアップを行います。これにより、ブランチのコミットを一つずつ確認して、どのコミットを修正/フィックスアップすべきかを調べる手間が省けます。詳細はドキュメントを参照: <https://github.com/jesseduffield/lazygit/tree/master/docs/Fixup_Commits.md> |
 | `` / `` | 現在のビューをテキストで検索 |  |
 
 ## メニュー
@@ -321,20 +319,21 @@ _凡例：`＜c-b＞` はctrl+b、`＜a-b＞` はalt+b、`B` はshift+bを意味
 
 | Key | Action | Info |
 |-----|--------|-------------|
-| `` <c-o> `` | Copy abbreviated commit hash to clipboard |  |
+| `` <ctrl+o> `` | Copy abbreviated commit hash to clipboard |  |
+| `` b `` | bisectオプションを表示 |  |
 | `` <space> `` | チェックアウト（ブランチの切り替え） | 選択したコミットをデタッチドヘッド（特定のブランチに属さない状態）としてチェックアウトします。 |
 | `` y `` | コミット属性をクリップボードにコピー | コミット属性をクリップボードにコピーします（例：ハッシュ、URL、差分、メッセージ、作者）。 |
 | `` o `` | ブラウザでコミットを開く |  |
 | `` n `` | コミットから新しいブランチを作成 |  |
 | `` N `` | コミットを新しいブランチに移動 | Create a new branch and move the unpushed commits of the current branch to it. Useful if you meant to start new work and forgot to create a new branch first.<br><br>Note that this disregards the selection, the new branch is always created either from the main branch or stacked on top of the current branch (you get to choose which). |
+| `` w `` | 新しいワークツリー |  |
 | `` g `` | リセット | 選択した項目へのリセットオプション（ソフト/ミックス/ハード）を表示します。各リセットタイプの詳細は次の通りです：<br>- ソフトリセット：変更を保持し、ステージされた状態にします<br>- ミックスリセット：変更を保持し、ステージされていない状態にします<br>- ハードリセット：すべての変更を破棄します |
 | `` C `` | コピー（チェリーピック） | コミットをコピーとしてマークします。ローカルコミットビューで `V` を押すと、コピーしたコミットをチェックアウトしたブランチにペースト（チェリーピック）できます。いつでも `<esc>` を押して選択をキャンセルできます。 |
-| `` <c-r> `` | コピーされた（チェリーピックされた）コミットの選択をリセット |  |
-| `` <c-t> `` | 外部差分ツールを開く（git difftool） |  |
+| `` <ctrl+r> `` | コピーされた（チェリーピックされた）コミットの選択をリセット |  |
+| `` <ctrl+t> `` | 外部差分ツールを開く（git difftool） |  |
 | `` * `` | 現在のブランチのコミットを選択 |  |
 | `` 0 `` | メインビューにフォーカス |  |
 | `` <enter> `` | コミットを表示 |  |
-| `` w `` | ワークツリーオプションを表示 |  |
 | `` / `` | 現在のビューをテキストでフィルタリング |  |
 
 ## リモート
@@ -353,49 +352,52 @@ _凡例：`＜c-b＞` はctrl+b、`＜a-b＞` はalt+b、`B` はshift+bを意味
 
 | Key | Action | Info |
 |-----|--------|-------------|
-| `` <c-o> `` | ブランチ名をクリップボードにコピー |  |
+| `` <ctrl+o> `` | ブランチ名をクリップボードにコピー |  |
 | `` <space> `` | チェックアウト（ブランチの切り替え） | 選択したリモートブランチに基づいて新しいローカルブランチをチェックアウトするか、リモートブランチをデタッチドヘッドとしてチェックアウトします。 |
 | `` n `` | 新しいブランチ |  |
+| `` w `` | 新しいワークツリー |  |
 | `` M `` | マージ | 選択した項目を現在のブランチにマージするためのオプションを表示します（通常のマージ、スカッシュマージ） |
 | `` r `` | リベース | チェックアウトしたブランチを選択したブランチ上にリベースします。 |
 | `` d `` | 削除 | リモートからリモートブランチを削除します。 |
 | `` u `` | アップストリームとして設定 | 選択したリモートブランチをチェックアウトされたブランチのアップストリームとして設定します。 |
 | `` s `` | 並び順 |  |
 | `` g `` | リセット | 選択した項目へのリセットオプション（ソフト/ミックス/ハード）を表示します。各リセットタイプの詳細は次の通りです：<br>- ソフトリセット：変更を保持し、ステージされた状態にします<br>- ミックスリセット：変更を保持し、ステージされていない状態にします<br>- ハードリセット：すべての変更を破棄します |
-| `` <c-t> `` | 外部差分ツールを開く（git difftool） |  |
+| `` <ctrl+t> `` | 外部差分ツールを開く（git difftool） |  |
+| `` b `` | bisectオプションを表示 |  |
 | `` 0 `` | メインビューにフォーカス |  |
 | `` <enter> `` | コミットを表示 |  |
-| `` w `` | ワークツリーオプションを表示 |  |
 | `` / `` | 現在のビューをテキストでフィルタリング |  |
 
 ## ローカルブランチ
 
 | Key | Action | Info |
 |-----|--------|-------------|
-| `` <c-o> `` | ブランチ名をクリップボードにコピー |  |
+| `` <ctrl+o> `` | ブランチ名をクリップボードにコピー |  |
+| `` b `` | bisectオプションを表示 |  |
 | `` i `` | git-flowオプションを表示 |  |
 | `` <space> `` | チェックアウト（ブランチの切り替え） | 選択した項目をチェックアウトします。 |
 | `` n `` | 新しいブランチ |  |
 | `` N `` | コミットを新しいブランチに移動 | Create a new branch and move the unpushed commits of the current branch to it. Useful if you meant to start new work and forgot to create a new branch first.<br><br>Note that this disregards the selection, the new branch is always created either from the main branch or stacked on top of the current branch (you get to choose which). |
+| `` w `` | 新しいワークツリー |  |
 | `` o `` | プルリクエストを作成 |  |
 | `` O `` | プルリクエスト作成オプションを表示 |  |
-| `` <c-y> `` | プルリクエストURLをクリップボードにコピー |  |
+| `` G `` | Open pull request in browser |  |
+| `` <ctrl+y> `` | プルリクエストURLをクリップボードにコピー |  |
 | `` c `` | 名前でチェックアウト | 名前でチェックアウトします。入力ボックスに「-」を入力すると、最後のブランチをチェックアウトすることができます。 |
 | `` - `` | 直前のブランチにチェックアウト |  |
 | `` F `` | 強制チェックアウト | 選択したブランチを強制的にチェックアウトします。これにより、選択したブランチをチェックアウトする前にワーキングディレクトリ内のすべてのローカル変更が破棄されます。 |
 | `` d `` | 削除 | ローカル/リモートブランチの削除オプションを表示します。 |
 | `` r `` | リベース | チェックアウトしたブランチを選択したブランチ上にリベースします。 |
 | `` M `` | マージ | 選択した項目を現在のブランチにマージするためのオプションを表示します（通常のマージ、スカッシュマージ） |
-| `` f `` | ブランチを最新化（fast-forward） | 選択したブランチを対応するアップストリームの最新状態に追いつかせます（fast-forward）。 |
+| `` f `` | ブランチを最新化（fast-forward） | Fast-forward selected branch from its upstream. If the branch has diverged from its upstream because the upstream branch was rewritten, and it has no commits of its own, it is reset to its upstream instead. This needs reflogs to be enabled; a bare repository doesn't keep them by default (core.logAllRefUpdates). |
 | `` T `` | 新しいタグを作成 |  |
 | `` s `` | 並び順 |  |
 | `` g `` | リセット |  |
 | `` R `` | ブランチ名を変更 |  |
 | `` u `` | アップストリームオプションを表示 | ブランチのアップストリームに関連するオプションを表示します（例：アップストリームの設定/解除やアップストリームへのリセット）。 |
-| `` <c-t> `` | 外部差分ツールを開く（git difftool） |  |
+| `` <ctrl+t> `` | 外部差分ツールを開く（git difftool） |  |
 | `` 0 `` | メインビューにフォーカス |  |
 | `` <enter> `` | コミットを表示 |  |
-| `` w `` | ワークツリーオプションを表示 |  |
 | `` / `` | 現在のビューをテキストでフィルタリング |  |
 
 ## ワークツリー
@@ -414,4 +416,4 @@ _凡例：`＜c-b＞` はctrl+b、`＜a-b＞` はalt+b、`B` はshift+bを意味
 |-----|--------|-------------|
 | `` <enter> `` | 確認 |  |
 | `` <esc> `` | 閉じる/キャンセル |  |
-| `` <c-o> `` | クリップボードにコピー |  |
+| `` <ctrl+o> `` | クリップボードにコピー |  |

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/go-errors/errors"
+	"github.com/jesseduffield/lazygit/pkg/commands/models"
 	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
 	"github.com/jesseduffield/lazygit/pkg/config"
 	"github.com/stretchr/testify/assert"
@@ -270,13 +271,14 @@ func TestBranchCurrentBranchInfo(t *testing.T) {
 			"falls back to git `git branch --points-at=HEAD` if symbolic-ref fails",
 			oscommands.NewFakeRunner(t).
 				ExpectGitArgs([]string{"symbolic-ref", "--short", "HEAD"}, "", errors.New("error")).
-				ExpectGitArgs([]string{"branch", "--points-at=HEAD", "--format=%(HEAD)%00%(objectname)%00%(refname)"},
-					"*\x006f71c57a8d4bd6c11399c3f55f42c815527a73a4\x00(HEAD detached at 6f71c57a)\n", nil),
+				ExpectGitArgs([]string{"branch", "--points-at=HEAD", "--format=%(HEAD)%00%(objectname)%00%(refname)%00%(contents:subject)"},
+					"*\x006f71c57a8d4bd6c11399c3f55f42c815527a73a4\x00(HEAD detached at 6f71c57a)\x00Some subject\n", nil),
 			func(info BranchInfo, err error) {
 				assert.NoError(t, err)
 				assert.EqualValues(t, "6f71c57a8d4bd6c11399c3f55f42c815527a73a4", info.RefName)
 				assert.EqualValues(t, "(HEAD detached at 6f71c57a)", info.DisplayName)
 				assert.True(t, info.DetachedHead)
+				assert.EqualValues(t, "Some subject", info.Subject)
 			},
 		},
 		{
@@ -284,22 +286,23 @@ func TestBranchCurrentBranchInfo(t *testing.T) {
 			oscommands.NewFakeRunner(t).
 				ExpectGitArgs([]string{"symbolic-ref", "--short", "HEAD"}, "", errors.New("error")).
 				ExpectGitArgs(
-					[]string{"branch", "--points-at=HEAD", "--format=%(HEAD)%00%(objectname)%00%(refname)"},
-					"*\x00679b0456f3db7c505b398def84e7d023e5b55a8d\x00（头指针在 679b0456 分离）\n"+
-						" \x00679b0456f3db7c505b398def84e7d023e5b55a8d\x00refs/heads/master\n",
+					[]string{"branch", "--points-at=HEAD", "--format=%(HEAD)%00%(objectname)%00%(refname)%00%(contents:subject)"},
+					"*\x00679b0456f3db7c505b398def84e7d023e5b55a8d\x00（头指针在 679b0456 分离）\x00一些主题\n"+
+						" \x00679b0456f3db7c505b398def84e7d023e5b55a8d\x00refs/heads/master\x00一些主题\n",
 					nil),
 			func(info BranchInfo, err error) {
 				assert.NoError(t, err)
 				assert.EqualValues(t, "679b0456f3db7c505b398def84e7d023e5b55a8d", info.RefName)
 				assert.EqualValues(t, "（头指针在 679b0456 分离）", info.DisplayName)
 				assert.True(t, info.DetachedHead)
+				assert.EqualValues(t, "一些主题", info.Subject)
 			},
 		},
 		{
 			"bubbles up error if there is one",
 			oscommands.NewFakeRunner(t).
 				ExpectGitArgs([]string{"symbolic-ref", "--short", "HEAD"}, "", errors.New("error")).
-				ExpectGitArgs([]string{"branch", "--points-at=HEAD", "--format=%(HEAD)%00%(objectname)%00%(refname)"}, "", errors.New("error")),
+				ExpectGitArgs([]string{"branch", "--points-at=HEAD", "--format=%(HEAD)%00%(objectname)%00%(refname)%00%(contents:subject)"}, "", errors.New("error")),
 			func(info BranchInfo, err error) {
 				assert.Error(t, err)
 				assert.EqualValues(t, "", info.RefName)
@@ -313,6 +316,114 @@ func TestBranchCurrentBranchInfo(t *testing.T) {
 		t.Run(s.testName, func(t *testing.T) {
 			instance := buildBranchCommands(commonDeps{runner: s.runner})
 			s.test(instance.CurrentBranchInfo())
+			s.runner.CheckForMissingCalls()
+		})
+	}
+}
+
+func TestBranchHasLocalOnlyCommits(t *testing.T) {
+	type scenario struct {
+		testName string
+		runner   *oscommands.FakeCmdObjRunner
+		test     func(bool, error)
+	}
+
+	branch := &models.Branch{
+		Name:           "branch",
+		UpstreamRemote: "origin",
+		UpstreamBranch: "branch",
+	}
+
+	scenarios := []scenario{
+		{
+			"branch is strictly behind its upstream, and there are no reflogs",
+			oscommands.NewFakeRunner(t).
+				ExpectGitArgs([]string{"reflog", "show", "--format=%H", "refs/remotes/origin/branch"}, "", nil).
+				ExpectGitArgs([]string{"rev-parse", "-q", "--verify", "refs/remotes/origin/branch@{0}"}, "", errors.New("error")).
+				ExpectGitArgs([]string{
+					"rev-list", "--max-count=1", "--ignore-missing", "refs/heads/branch",
+					"^refs/remotes/origin/branch", "--",
+				}, "", nil),
+			func(hasLocalOnlyCommits bool, err error) {
+				assert.NoError(t, err)
+				assert.False(t, hasLocalOnlyCommits)
+			},
+		},
+		{
+			"the upstream branch was rewritten, so all our commits were on it before",
+			oscommands.NewFakeRunner(t).
+				ExpectGitArgs([]string{"reflog", "show", "--format=%H", "refs/remotes/origin/branch"},
+					"1111111111111111111111111111111111111111\n2222222222222222222222222222222222222222\n", nil).
+				ExpectGitArgs([]string{"rev-parse", "-q", "--verify", "refs/remotes/origin/branch@{2}"},
+					"3333333333333333333333333333333333333333\n", nil).
+				ExpectGitArgs([]string{
+					"rev-list", "--max-count=1", "--ignore-missing", "refs/heads/branch",
+					"^refs/remotes/origin/branch",
+					"^1111111111111111111111111111111111111111",
+					"^2222222222222222222222222222222222222222",
+					"^3333333333333333333333333333333333333333",
+					"--",
+				}, "", nil),
+			func(hasLocalOnlyCommits bool, err error) {
+				assert.NoError(t, err)
+				assert.False(t, hasLocalOnlyCommits)
+			},
+		},
+		{
+			"the oldest reflog entry is the one that created the ref",
+			oscommands.NewFakeRunner(t).
+				ExpectGitArgs([]string{"reflog", "show", "--format=%H", "refs/remotes/origin/branch"},
+					"1111111111111111111111111111111111111111\n", nil).
+				ExpectGitArgs([]string{"rev-parse", "-q", "--verify", "refs/remotes/origin/branch@{1}"}, "", errors.New("error")).
+				ExpectGitArgs([]string{
+					"rev-list", "--max-count=1", "--ignore-missing", "refs/heads/branch",
+					"^refs/remotes/origin/branch",
+					"^1111111111111111111111111111111111111111",
+					"--",
+				}, "", nil),
+			func(hasLocalOnlyCommits bool, err error) {
+				assert.NoError(t, err)
+				assert.False(t, hasLocalOnlyCommits)
+			},
+		},
+		{
+			"the branch has a commit that was never on the upstream branch",
+			oscommands.NewFakeRunner(t).
+				ExpectGitArgs([]string{"reflog", "show", "--format=%H", "refs/remotes/origin/branch"},
+					"1111111111111111111111111111111111111111\n", nil).
+				ExpectGitArgs([]string{"rev-parse", "-q", "--verify", "refs/remotes/origin/branch@{1}"},
+					"2222222222222222222222222222222222222222\n", nil).
+				ExpectGitArgs([]string{
+					"rev-list", "--max-count=1", "--ignore-missing", "refs/heads/branch",
+					"^refs/remotes/origin/branch",
+					"^1111111111111111111111111111111111111111",
+					"^2222222222222222222222222222222222222222",
+					"--",
+				}, "4444444444444444444444444444444444444444\n", nil),
+			func(hasLocalOnlyCommits bool, err error) {
+				assert.NoError(t, err)
+				assert.True(t, hasLocalOnlyCommits)
+			},
+		},
+		{
+			"bubbles up an error from rev-list",
+			oscommands.NewFakeRunner(t).
+				ExpectGitArgs([]string{"reflog", "show", "--format=%H", "refs/remotes/origin/branch"}, "", nil).
+				ExpectGitArgs([]string{"rev-parse", "-q", "--verify", "refs/remotes/origin/branch@{0}"}, "", errors.New("error")).
+				ExpectGitArgs([]string{
+					"rev-list", "--max-count=1", "--ignore-missing", "refs/heads/branch",
+					"^refs/remotes/origin/branch", "--",
+				}, "", errors.New("error")),
+			func(hasLocalOnlyCommits bool, err error) {
+				assert.Error(t, err)
+			},
+		},
+	}
+
+	for _, s := range scenarios {
+		t.Run(s.testName, func(t *testing.T) {
+			instance := buildBranchCommands(commonDeps{runner: s.runner})
+			s.test(instance.HasLocalOnlyCommits(branch))
 			s.runner.CheckForMissingCalls()
 		})
 	}

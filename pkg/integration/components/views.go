@@ -3,7 +3,7 @@ package components
 import (
 	"fmt"
 
-	"github.com/jesseduffield/gocui"
+	"github.com/jesseduffield/lazygit/pkg/gocui"
 )
 
 type Views struct {
@@ -32,10 +32,6 @@ func (self *Views) regularView(viewName string) *ViewDriver {
 		getView: func() *gocui.View { return self.t.gui.View(viewName) },
 		t:       self.t,
 	}
-}
-
-func (self *Views) patchExplorerViewByName(viewName string) *ViewDriver {
-	return self.regularView(viewName)
 }
 
 func (self *Views) MergeConflicts() *ViewDriver {
@@ -102,26 +98,16 @@ func (self *Views) Stash() *ViewDriver {
 	return self.regularView("stash")
 }
 
-func (self *Views) Staging() *ViewDriver {
-	return self.patchExplorerViewByName("staging")
-}
-
-func (self *Views) StagingSecondary() *ViewDriver {
-	return self.patchExplorerViewByName("stagingSecondary")
-}
-
-func (self *Views) PatchBuilding() *ViewDriver {
-	return self.patchExplorerViewByName("patchBuilding")
-}
-
-func (self *Views) PatchBuildingSecondary() *ViewDriver {
-	// this is not a patch explorer view because you can't actually focus it: it
-	// just renders content
-	return self.regularView("patchBuildingSecondary")
-}
-
 func (self *Views) Menu() *ViewDriver {
 	return self.regularView("menu")
+}
+
+func (self *Views) MenuFilter() *ViewDriver {
+	return self.regularView("menuFilter")
+}
+
+func (self *Views) MenuFilterFrame() *ViewDriver {
+	return self.regularView("menuFilterFrame")
 }
 
 func (self *Views) Confirmation() *ViewDriver {

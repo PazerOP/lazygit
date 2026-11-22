@@ -11,6 +11,8 @@ type UserConfig struct {
 	Gui GuiConfig `yaml:"gui"`
 	// Config relating to git
 	Git GitConfig `yaml:"git"`
+	// Config relating to git worktrees
+	Worktree WorktreeConfig `yaml:"worktree"`
 	// Periodic update checks
 	Update UpdateConfig `yaml:"update"`
 	// Background refreshes
@@ -36,17 +38,21 @@ type UserConfig struct {
 	NotARepository string `yaml:"notARepository" jsonschema:"enum=prompt,enum=create,enum=skip,enum=quit"`
 	// If true, display a confirmation when subprocess terminates. This allows you to view the output of the subprocess before returning to Lazygit.
 	PromptToReturnFromSubprocess bool `yaml:"promptToReturnFromSubprocess"`
-	// Keybindings
+	// Keybindings.
+	// Each binding can be a single key or a list of keys; see https://github.com/jesseduffield/lazygit/blob/master/docs/keybindings/Custom_Keybindings.md for the syntax.
 	Keybinding KeybindingConfig `yaml:"keybinding"`
 }
 
 type RefresherConfig struct {
 	// File/submodule refresh interval in seconds.
 	// Auto-refresh can be disabled via option 'git.autoRefresh'.
-	RefreshInterval int `yaml:"refreshInterval" jsonschema:"minimum=0"`
+	RefreshInterval int `yaml:"refreshInterval" jsonschema:"exclusiveMinimum=0"`
 	// Re-fetch interval in seconds.
 	// Auto-fetch can be disabled via option 'git.autoFetch'.
-	FetchInterval int `yaml:"fetchInterval" jsonschema:"minimum=0"`
+	FetchInterval int `yaml:"fetchInterval" jsonschema:"exclusiveMinimum=0"`
+	// Interval in seconds at which lazygit polls for external ref changes (commits, branch updates, checkouts made outside lazygit).
+	// Detection can be disabled via option 'git.autoDetectExternalChanges'.
+	ExternalChangeCheckInterval int `yaml:"externalChangeCheckInterval" jsonschema:"exclusiveMinimum=0"`
 }
 
 func (c *RefresherConfig) RefreshIntervalDuration() time.Duration {
@@ -57,14 +63,11 @@ func (c *RefresherConfig) FetchIntervalDuration() time.Duration {
 	return time.Second * time.Duration(c.FetchInterval)
 }
 
+func (c *RefresherConfig) ExternalChangeCheckIntervalDuration() time.Duration {
+	return time.Second * time.Duration(c.ExternalChangeCheckInterval)
+}
+
 type GuiConfig struct {
-	// See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-author-color
-	AuthorColors map[string]string `yaml:"authorColors"`
-	// See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-branch-color
-	// Deprecated: use branchColorPatterns instead
-	BranchColors map[string]string `yaml:"branchColors" jsonschema:"deprecated"`
-	// See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-branch-color
-	BranchColorPatterns map[string]string `yaml:"branchColorPatterns"`
 	// Custom icons for filenames and file extensions
 	// See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-files-icon--color
 	CustomIcons CustomIconsConfig `yaml:"customIcons"`
@@ -77,14 +80,14 @@ type GuiConfig struct {
 	// One of: 'margin' (default) | 'jump'
 	ScrollOffBehavior string `yaml:"scrollOffBehavior"`
 	// The number of spaces per tab; used for everything that's shown in the main view, but probably mostly relevant for diffs.
-	// Note that when using a pager, the pager has its own tab width setting, so you need to pass it separately in the pager command.
+	// Note that when using a diff renderer, the renderer has its own tab width setting, so you need to pass it separately in the renderer command.
 	TabWidth int `yaml:"tabWidth" jsonschema:"minimum=1"`
 	// If true, capture mouse events.
 	// When mouse events are captured, it's a little harder to select text: e.g. requiring you to hold the option key when on macOS.
 	MouseEvents bool `yaml:"mouseEvents"`
 	// If true, do not show a warning when amending a commit.
 	SkipAmendWarning bool `yaml:"skipAmendWarning"`
-	// If true, do not show a warning when discarding changes in the staging view.
+	// If true, do not show a warning when discarding changes from a focused diff.
 	SkipDiscardChangeWarning bool `yaml:"skipDiscardChangeWarning"`
 	// If true, do not show warning when applying/popping the stash
 	SkipStashWarning bool `yaml:"skipStashWarning"`
@@ -101,6 +104,13 @@ type GuiConfig struct {
 	ExpandFocusedSidePanel bool `yaml:"expandFocusedSidePanel"`
 	// The weight of the expanded side panel, relative to the other panels. 2 means twice as tall as the other panels. Only relevant if `expandFocusedSidePanel` is true.
 	ExpandedSidePanelWeight int `yaml:"expandedSidePanelWeight"`
+	// If true, don't give a side panel more height than it needs to show its content; when all panels fit, the leftover height is shared among them so that they still fill the screen.
+	ShrinkSidePanelsToContent bool `yaml:"shrinkSidePanelsToContent"`
+	// The side panels, in the order they appear from top to bottom.
+	// Each entry is a list of one or more names that share a single panel as tabs (cycle through them with the next-tab/previous-tab keys).
+	// Omit a name to hide it; give a name its own one-element list to promote a tab to a top-level panel.
+	// Valid names are: 'status', 'files', 'worktrees', 'submodules', 'branches', 'remotes', 'tags', 'commits', 'reflog', 'stash'. 'files', 'branches', and 'commits' must always be included; they can't be hidden.
+	SidePanels []SidePanel `yaml:"sidePanels"`
 	// Sometimes the main window is split in two (e.g. when the selected file has both staged and unstaged changes). This setting controls how the two sections are split.
 	// Options are:
 	// - 'horizontal': split the window horizontally
@@ -112,10 +122,11 @@ type GuiConfig struct {
 	// - 'left': split the window horizontally (side panel on the left, main view on the right)
 	// - 'top': split the window vertically (side panel on top, main view below)
 	EnlargedSideViewLocation string `yaml:"enlargedSideViewLocation"`
-	// If true, wrap lines in the staging view to the width of the view. This makes it much easier to work with diffs that have long lines, e.g. paragraphs of markdown text.
-	WrapLinesInStagingView bool `yaml:"wrapLinesInStagingView"`
-	// If true, hunk selection mode will be enabled by default when entering the staging view.
-	UseHunkModeInStagingView bool `yaml:"useHunkModeInStagingView"`
+	// If true, wrap lines in focused diffs to the width of the view. This makes it much easier to work with diffs that have long lines, e.g. paragraphs of markdown text.
+	// If false, scroll a focused diff sideways with the scrollLeft and scrollRight keys (H and L by default).
+	WrapLinesInDiffView bool `yaml:"wrapLinesInDiffView"`
+	// If true, hunk selection mode will be enabled by default when focusing a diff.
+	UseHunkModeInDiffView bool `yaml:"useHunkModeInDiffView"`
 	// One of 'auto' (default) | 'en' | 'zh-CN' | 'zh-TW' | 'pl' | 'nl' | 'ja' | 'ko' | 'ru' | 'pt'
 	Language string `yaml:"language" jsonschema:"enum=auto,enum=en,enum=zh-TW,enum=zh-CN,enum=pl,enum=nl,enum=ja,enum=ko,enum=ru"`
 	// Format used when displaying time e.g. commit time.
@@ -124,9 +135,19 @@ type GuiConfig struct {
 	// Format used when displaying time if the time is less than 24 hours ago.
 	// Uses Go's time format syntax: https://pkg.go.dev/time#Time.Format
 	ShortTimeFormat string `yaml:"shortTimeFormat"`
+	// Whether the terminal has a dark or a light background. This decides whether 'darkTheme' or 'lightTheme' applies, and the colors of authors are picked to stand out against it.
+	// One of: 'auto' (default) | 'dark' | 'light'
+	// With 'auto', lazygit asks the terminal, and assumes a dark background if the terminal doesn't tell.
+	ColorScheme string `yaml:"colorScheme" jsonschema:"enum=auto,enum=dark,enum=light"`
 	// Config relating to colors and styles.
 	// See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#color-attributes
 	Theme ThemeConfig `yaml:"theme"`
+	// Colors and styles that override those in 'theme' when the terminal has a dark background. It has the same fields as 'theme'.
+	// See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#themes-for-dark-and-light-backgrounds
+	DarkTheme ThemeConfig `yaml:"darkTheme"`
+	// Colors and styles that override those in 'theme' when the terminal has a light background. It has the same fields as 'theme'.
+	// See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#themes-for-dark-and-light-backgrounds
+	LightTheme ThemeConfig `yaml:"lightTheme"`
 	// Config relating to the commit length indicator
 	CommitLength CommitLengthConfig `yaml:"commitLength"`
 	// If true, show the '5 of 20' footer at the bottom of list views
@@ -136,6 +157,11 @@ type GuiConfig struct {
 	ShowFileTree bool `yaml:"showFileTree"`
 	// If true, add a "/" root item in the file tree representing the root of the repository. It is only added when necessary, i.e. when there is more than one item at top level.
 	ShowRootItemInFileTree bool `yaml:"showRootItemInFileTree"`
+	// How to sort files and directories in the file tree.
+	// One of: 'mixed' (default) | 'filesFirst' | 'foldersFirst'
+	FileTreeSortOrder string `yaml:"fileTreeSortOrder" jsonschema:"enum=mixed,enum=filesFirst,enum=foldersFirst"`
+	// If true (default), sort the file tree case-sensitively.
+	FileTreeSortCaseSensitive bool `yaml:"fileTreeSortCaseSensitive"`
 	// If true, show the number of lines changed per file in the Files view
 	ShowNumstatInFilesView bool `yaml:"showNumstatInFilesView"`
 	// If true, show a random tip in the command log when Lazygit starts
@@ -154,6 +180,11 @@ type GuiConfig struct {
 	NerdFontsVersion string `yaml:"nerdFontsVersion" jsonschema:"enum=2,enum=3,enum="`
 	// If true (default), file icons are shown in the file views. Only relevant if NerdFontsVersion is not empty.
 	ShowFileIcons bool `yaml:"showFileIcons"`
+	// How the commit graph is drawn.
+	// One of: 'auto' (default) | 'classic' | 'detailed'
+	// 'detailed' connects the lines to the commit circles, and shows exactly where branches fork off and merge. It draws the graph with the git branch drawing symbols (U+F5D0 to U+F60D), so it needs a terminal that draws these itself: kitty, Ghostty, WezTerm (nightly builds), Contour, or VS Code's terminal with GPU acceleration. Other terminals need a font that contains them, such as https://github.com/rbong/flog-symbols.
+	// 'auto' uses 'detailed' if lazygit recognizes the terminal as one that draws these symbols (kitty and Ghostty), and 'classic' otherwise.
+	CommitGraphStyle string `yaml:"commitGraphStyle" jsonschema:"enum=auto,enum=classic,enum=detailed"`
 	// Length of author name in (non-expanded) commits view. 2 means show initials only.
 	CommitAuthorShortLength int `yaml:"commitAuthorShortLength"`
 	// Length of author name in expanded commits view. 2 means show initials only.
@@ -182,6 +213,10 @@ type GuiConfig struct {
 	// Whether to stack UI components on top of each other.
 	// One of 'auto' (default) | 'always' | 'never'
 	PortraitMode string `yaml:"portraitMode"`
+	// In 'auto' mode, portrait mode will be used if the window width is less than or equal to portraitModeAutoMaxWidth and the window height is greater than or equal to portraitModeAutoMinHeight. Unused when portraitMode is not 'auto'.
+	PortraitModeAutoMaxWidth int `yaml:"portraitModeAutoMaxWidth"`
+	// In 'auto' mode, portrait mode will be used if the window width is less than or equal to portraitModeAutoMaxWidth and the window height is greater than or equal to portraitModeAutoMinHeight. Unused when portraitMode is not 'auto'.
+	PortraitModeAutoMinHeight int `yaml:"portraitModeAutoMinHeight"`
 	// How things are filtered when typing '/'.
 	// One of 'substring' (default) | 'fuzzy'
 	FilterMode string `yaml:"filterMode" jsonschema:"enum=substring,enum=fuzzy"`
@@ -211,10 +246,15 @@ type ThemeConfig struct {
 	SearchingActiveBorderColor []string `yaml:"searchingActiveBorderColor" jsonschema:"minItems=1,uniqueItems=true"`
 	// Color of keybindings help text in the bottom line
 	OptionsTextColor []string `yaml:"optionsTextColor" jsonschema:"minItems=1,uniqueItems=true"`
+	// Color and attributes of the text of the selected line. The attributes are added to those of the text, and a color replaces the colors of the text.
+	// Set it to 'default' to leave the text as it is, e.g. if you don't want the selected line in bold.
+	SelectedLineFgColor []string `yaml:"selectedLineFgColor" jsonschema:"minItems=1,uniqueItems=true"`
 	// Background color of selected line.
+	// Default: 'blue' if the terminal has a dark background, or a suitable RGB blue computed from the background color if it is light.
 	// See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#highlighting-the-selected-line
 	SelectedLineBgColor []string `yaml:"selectedLineBgColor" jsonschema:"minItems=1,uniqueItems=true"`
 	// Background color of selected line when view doesn't have focus.
+	// Default: a suitable RGB grey computed from the terminal's background color.
 	InactiveViewSelectedLineBgColor []string `yaml:"inactiveViewSelectedLineBgColor" jsonschema:"minItems=1,uniqueItems=true"`
 	// Foreground color of copied commit
 	CherryPickedCommitFgColor []string `yaml:"cherryPickedCommitFgColor" jsonschema:"minItems=1,uniqueItems=true"`
@@ -228,6 +268,10 @@ type ThemeConfig struct {
 	UnstagedChangesColor []string `yaml:"unstagedChangesColor" jsonschema:"minItems=1,uniqueItems=true"`
 	// Default text color
 	DefaultFgColor []string `yaml:"defaultFgColor" jsonschema:"minItems=1,uniqueItems=true"`
+	// See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-author-color
+	AuthorColors map[string]string `yaml:"authorColors"`
+	// See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-branch-color
+	BranchColorPatterns ColorPatterns `yaml:"branchColorPatterns"`
 }
 
 type CommitLengthConfig struct {
@@ -243,30 +287,39 @@ type SpinnerConfig struct {
 }
 
 type GitConfig struct {
-	// Array of pagers. Each entry has the following format:
-	// [dev] The following documentation is duplicated from the PagingConfig struct below.
+	// Array of diff renderers. Each entry has the following format:
+	// [dev] The following documentation is duplicated from the DiffRendererConfig struct below.
 	//
-	//   # Value of the --color arg in the git diff command. Some pagers want
-	//   # this to be set to 'always' and some want it set to 'never'
+	//   # The type of diff renderer. One of: 'stdinFilter' (default) | 'extDiff'
+	//   # | 'rawGit'
+	//   type: "stdinFilter"
+	//
+	//   # A name for the diff renderer, shown in the notification when cycling
+	//   # renderers. If not set, the name is derived from the first word of the
+	//   # renderer command.
+	//   name: ""
+	//
+	//   # Value of the --color arg in the git diff command. Only used for type
+	//   # 'stdinFilter'. Some renderers want this to be set to 'always' and some
+	//   # want it set to 'never'.
 	//   colorArg: "always"
 	//
+	//   # The command to use for rendering diffs. This is either a stdinFilter or
+	//   # an external diff command, depending on the type field; not applicable if
+	//   # the type is 'rawGit'.
 	//   # e.g.
 	//   # diff-so-fancy
 	//   # delta --dark --paging=never
-	//   # ydiff -p cat -s --wrap --width={{columnWidth}}
-	//   pager: ""
+	//   # ydiff -p cat
+	//   # difft --color=always
+	//   command: ""
 	//
-	//   # e.g. 'difft --color=always'
-	//   externalDiffCommand: ""
+	//   # Extra arguments (array of strings) passed to the git command. Only
+	//   # applicable if the type is 'rawGit'.
+	//   args: []
 	//
-	//   # If true, Lazygit will use git's `diff.external` config for paging.
-	//   # The advantage over `externalDiffCommand` is that this can be
-	//   # configured per file type in .gitattributes; see
-	//   # https://git-scm.com/docs/gitattributes#_defining_an_external_diff_driver.
-	//   useExternalDiffGitConfig: false
-	//
-	// See https://github.com/jesseduffield/lazygit/blob/master/docs/Custom_Pagers.md for more information.
-	Pagers []PagingConfig `yaml:"pagers"`
+	// See https://github.com/jesseduffield/lazygit/blob/master/docs/Custom_DiffRenderers.md for more information.
+	DiffRenderers []DiffRendererConfig `yaml:"diffRenderers"`
 	// Config relating to committing
 	Commit CommitConfig `yaml:"commit"`
 	// Config relating to merging
@@ -279,7 +332,9 @@ type GitConfig struct {
 	AutoFetch bool `yaml:"autoFetch"`
 	// If true, periodically refresh files and submodules
 	AutoRefresh bool `yaml:"autoRefresh"`
-	// If not "none", lazygit will automatically fast-forward local branches to match their upstream after fetching. Applies to branches that are not the currently checked out branch, and only to those that are strictly behind their upstream (as opposed to diverged).
+	// If true, poll the repo periodically for external ref changes (commits, branch updates, checkouts made outside lazygit) and refresh when one is detected. Independent of autoRefresh, which only governs the files panel.
+	AutoDetectExternalChanges bool `yaml:"autoDetectExternalChanges"`
+	// If not "none", lazygit will automatically fast-forward local branches to match their upstream after fetching. Applies to branches that are not the currently checked out branch, and only to those that are strictly behind their upstream (as opposed to diverged). A branch that is checked out in another worktree is fast-forwarded there, unless that worktree has changes to tracked files or is in the middle of a rebase or bisect.
 	// Possible values: 'none' | 'onlyMainBranches' | 'allBranches'
 	AutoForwardBranches string `yaml:"autoForwardBranches" jsonschema:"enum=none,enum=onlyMainBranches,enum=allBranches"`
 	// If true, pass the --all arg to git fetch
@@ -290,7 +345,7 @@ type GitConfig struct {
 	BranchLogCmd string `yaml:"branchLogCmd"`
 	// Commands used to display git log of all branches in the main window, they will be cycled in order of appearance (array of strings)
 	AllBranchesLogCmds []string `yaml:"allBranchesLogCmds"`
-	// If true, git diffs are rendered with the `--ignore-all-space` flag, which ignores whitespace changes. Can be toggled from within Lazygit with `<c-w>`.
+	// If true, git diffs are rendered with the `--ignore-all-space` flag, which ignores whitespace changes. Can be toggled from within Lazygit with `<ctrl+w>`.
 	IgnoreWhitespaceInDiffView bool `yaml:"ignoreWhitespaceInDiffView"`
 	// The number of lines of context to show around each diff hunk. Can be changed from within Lazygit with the `{` and `}` keys.
 	DiffContextSize uint64 `yaml:"diffContextSize"`
@@ -323,29 +378,34 @@ type GitConfig struct {
 	TruncateCopiedCommitHashesTo int `yaml:"truncateCopiedCommitHashesTo"`
 }
 
-type PagerType string
+type DiffRendererCommandType string
 
-func (PagerType) JSONSchemaExtend(schema *jsonschema.Schema) {
+func (DiffRendererCommandType) JSONSchemaExtend(schema *jsonschema.Schema) {
 	schema.Examples = []any{
 		"delta --dark --paging=never",
 		"diff-so-fancy",
-		"ydiff -p cat -s --wrap --width={{columnWidth}}",
+		"ydiff -p cat",
+		"difft --color=always",
 	}
 }
 
 // [dev] This documentation is duplicated in the GitConfig struct. If you make changes here, make them there too.
-type PagingConfig struct {
-	// Value of the --color arg in the git diff command. Some pagers want this to be set to 'always' and some want it set to 'never'
+type DiffRendererConfig struct {
+	// The type of diff renderer. One of: 'stdinFilter' (default) | 'extDiff' | 'rawGit'
+	Type string `yaml:"type" jsonschema:"enum=stdinFilter,enum=extDiff,enum=rawGit"`
+	// A name for the diff renderer, shown in the notification when cycling renderers. If not set, the name is derived from the first word of the renderer command.
+	Name string `yaml:"name"`
+	// Value of the --color arg in the git diff command. Only used for type 'stdinFilter'. Some renderers want this to be set to 'always' and some want it set to 'never'.
 	ColorArg string `yaml:"colorArg" jsonschema:"enum=always,enum=never"`
+	// The command to use for rendering diffs. This is either a stdinFilter or an external diff command, depending on the type field; not applicable if the type is 'rawGit'.
 	// e.g.
 	// diff-so-fancy
 	// delta --dark --paging=never
-	// ydiff -p cat -s --wrap --width={{columnWidth}}
-	Pager PagerType `yaml:"pager"`
-	// e.g. 'difft --color=always'
-	ExternalDiffCommand string `yaml:"externalDiffCommand"`
-	// If true, Lazygit will use git's `diff.external` config for paging. The advantage over `externalDiffCommand` is that this can be configured per file type in .gitattributes; see https://git-scm.com/docs/gitattributes#_defining_an_external_diff_driver.
-	UseExternalDiffGitConfig bool `yaml:"useExternalDiffGitConfig"`
+	// ydiff -p cat
+	// difft --color=always
+	Command DiffRendererCommandType `yaml:"command"`
+	// Extra arguments (array of strings) passed to the git command. Only applicable if the type is 'rawGit'.
+	Args []string `yaml:"args"`
 }
 
 type CommitConfig struct {
@@ -364,6 +424,7 @@ type MergingConfig struct {
 	// Extra args passed to `git merge`, e.g. --no-ff
 	Args string `yaml:"args" jsonschema:"example=--no-ff"`
 	// The commit message to use for a squash merge commit. Can contain "{{selectedRef}}" and "{{currentBranch}}" placeholders.
+	// If HEAD is detached, "{{currentBranch}}" is the branch being rebased, or "HEAD" if no rebase is in progress.
 	SquashMergeMessage string `yaml:"squashMergeMessage"`
 }
 
@@ -371,12 +432,12 @@ type LogConfig struct {
 	// One of: 'date-order' | 'author-date-order' | 'topo-order' | 'default'
 	// 'topo-order' makes it easier to read the git log graph, but commits may not appear chronologically. See https://git-scm.com/docs/
 	//
-	// Can be changed from within Lazygit with `Log menu -> Commit sort order` (`<c-l>` in the commits window by default).
+	// Can be changed from within Lazygit with `Log menu -> Commit sort order` (`<ctrl+l>` in the commits window by default).
 	Order string `yaml:"order" jsonschema:"enum=date-order,enum=author-date-order,enum=topo-order,enum=default"`
 	// This determines whether the git graph is rendered in the commits panel
 	// One of 'always' | 'never' | 'when-maximised'
 	//
-	// Can be toggled from within lazygit with `Log menu -> Show git graph` (`<c-l>` in the commits window by default).
+	// Can be toggled from within lazygit with `Log menu -> Show git graph` (`<ctrl+l>` in the commits window by default).
 	ShowGraph string `yaml:"showGraph" jsonschema:"enum=always,enum=never,enum=when-maximised"`
 	// displays the whole git graph by default in the commits view (equivalent to passing the `--all` argument to `git log`)
 	ShowWholeGraph bool `yaml:"showWholeGraph"`
@@ -387,6 +448,13 @@ type CommitPrefixConfig struct {
 	Pattern string `yaml:"pattern" jsonschema:"example=^\\w+\\/(\\w+-\\w+).*"`
 	// Replace directive. E.g. for 'feature/AB-123' to start the commit message with 'AB-123 ' use "[$1] "
 	Replace string `yaml:"replace" jsonschema:"example=[$1]"`
+}
+
+type WorktreeConfig struct {
+	// Default parent directory for new worktrees. It is offered as a candidate location alongside the parent directories of any worktrees you already have.
+	// A relative path is resolved against the repository's root directory, so "../worktrees" sits beside the repo and ".worktrees" sits inside it.
+	// A leading "~" is expanded to your home directory, so "~/worktrees" works.
+	DefaultPath string `yaml:"defaultPath"`
 }
 
 type UpdateConfig struct {
@@ -401,7 +469,6 @@ type KeybindingConfig struct {
 	Status         KeybindingStatusConfig         `yaml:"status"`
 	Files          KeybindingFilesConfig          `yaml:"files"`
 	Branches       KeybindingBranchesConfig       `yaml:"branches"`
-	Worktrees      KeybindingWorktreesConfig      `yaml:"worktrees"`
 	Commits        KeybindingCommitsConfig        `yaml:"commits"`
 	AmendAttribute KeybindingAmendAttributeConfig `yaml:"amendAttribute"`
 	Stash          KeybindingStashConfig          `yaml:"stash"`
@@ -413,197 +480,221 @@ type KeybindingConfig struct {
 
 // damn looks like we have some inconsistencies here with -alt and -alt1
 type KeybindingUniversalConfig struct {
-	Quit                              string   `yaml:"quit"`
-	QuitAlt1                          string   `yaml:"quit-alt1"`
-	SuspendApp                        string   `yaml:"suspendApp"`
-	Return                            string   `yaml:"return"`
-	QuitWithoutChangingDirectory      string   `yaml:"quitWithoutChangingDirectory"`
-	TogglePanel                       string   `yaml:"togglePanel"`
-	PrevItem                          string   `yaml:"prevItem"`
-	NextItem                          string   `yaml:"nextItem"`
-	PrevItemAlt                       string   `yaml:"prevItem-alt"`
-	NextItemAlt                       string   `yaml:"nextItem-alt"`
-	PrevPage                          string   `yaml:"prevPage"`
-	NextPage                          string   `yaml:"nextPage"`
-	ScrollLeft                        string   `yaml:"scrollLeft"`
-	ScrollRight                       string   `yaml:"scrollRight"`
-	GotoTop                           string   `yaml:"gotoTop"`
-	GotoBottom                        string   `yaml:"gotoBottom"`
-	GotoTopAlt                        string   `yaml:"gotoTop-alt"`
-	GotoBottomAlt                     string   `yaml:"gotoBottom-alt"`
-	ToggleRangeSelect                 string   `yaml:"toggleRangeSelect"`
-	RangeSelectDown                   string   `yaml:"rangeSelectDown"`
-	RangeSelectUp                     string   `yaml:"rangeSelectUp"`
-	PrevBlock                         string   `yaml:"prevBlock"`
-	NextBlock                         string   `yaml:"nextBlock"`
-	PrevBlockAlt                      string   `yaml:"prevBlock-alt"`
-	NextBlockAlt                      string   `yaml:"nextBlock-alt"`
-	NextBlockAlt2                     string   `yaml:"nextBlock-alt2"`
-	PrevBlockAlt2                     string   `yaml:"prevBlock-alt2"`
-	JumpToBlock                       []string `yaml:"jumpToBlock"`
-	FocusMainView                     string   `yaml:"focusMainView"`
-	NextMatch                         string   `yaml:"nextMatch"`
-	PrevMatch                         string   `yaml:"prevMatch"`
-	StartSearch                       string   `yaml:"startSearch"`
-	OptionMenu                        string   `yaml:"optionMenu"`
-	OptionMenuAlt1                    string   `yaml:"optionMenu-alt1"`
-	Select                            string   `yaml:"select"`
-	GoInto                            string   `yaml:"goInto"`
-	Confirm                           string   `yaml:"confirm"`
-	ConfirmMenu                       string   `yaml:"confirmMenu"`
-	ConfirmSuggestion                 string   `yaml:"confirmSuggestion"`
-	ConfirmInEditor                   string   `yaml:"confirmInEditor"`
-	ConfirmInEditorAlt                string   `yaml:"confirmInEditor-alt"`
-	Remove                            string   `yaml:"remove"`
-	New                               string   `yaml:"new"`
-	Edit                              string   `yaml:"edit"`
-	OpenFile                          string   `yaml:"openFile"`
-	ScrollUpMain                      string   `yaml:"scrollUpMain"`
-	ScrollDownMain                    string   `yaml:"scrollDownMain"`
-	ScrollUpMainAlt1                  string   `yaml:"scrollUpMain-alt1"`
-	ScrollDownMainAlt1                string   `yaml:"scrollDownMain-alt1"`
-	ScrollUpMainAlt2                  string   `yaml:"scrollUpMain-alt2"`
-	ScrollDownMainAlt2                string   `yaml:"scrollDownMain-alt2"`
-	ExecuteShellCommand               string   `yaml:"executeShellCommand"`
-	CreateRebaseOptionsMenu           string   `yaml:"createRebaseOptionsMenu"`
-	Push                              string   `yaml:"pushFiles"` // 'Files' appended for legacy reasons
-	Pull                              string   `yaml:"pullFiles"` // 'Files' appended for legacy reasons
-	Refresh                           string   `yaml:"refresh"`
-	CreatePatchOptionsMenu            string   `yaml:"createPatchOptionsMenu"`
-	NextTab                           string   `yaml:"nextTab"`
-	PrevTab                           string   `yaml:"prevTab"`
-	NextScreenMode                    string   `yaml:"nextScreenMode"`
-	PrevScreenMode                    string   `yaml:"prevScreenMode"`
-	CyclePagers                       string   `yaml:"cyclePagers"`
-	Undo                              string   `yaml:"undo"`
-	Redo                              string   `yaml:"redo"`
-	FilteringMenu                     string   `yaml:"filteringMenu"`
-	DiffingMenu                       string   `yaml:"diffingMenu"`
-	DiffingMenuAlt                    string   `yaml:"diffingMenu-alt"`
-	CopyToClipboard                   string   `yaml:"copyToClipboard"`
-	OpenRecentRepos                   string   `yaml:"openRecentRepos"`
-	SubmitEditorText                  string   `yaml:"submitEditorText"`
-	ExtrasMenu                        string   `yaml:"extrasMenu"`
-	ToggleWhitespaceInDiffView        string   `yaml:"toggleWhitespaceInDiffView"`
-	IncreaseContextInDiffView         string   `yaml:"increaseContextInDiffView"`
-	DecreaseContextInDiffView         string   `yaml:"decreaseContextInDiffView"`
-	IncreaseRenameSimilarityThreshold string   `yaml:"increaseRenameSimilarityThreshold"`
-	DecreaseRenameSimilarityThreshold string   `yaml:"decreaseRenameSimilarityThreshold"`
-	OpenDiffTool                      string   `yaml:"openDiffTool"`
+	Quit Keybinding `yaml:"quit"`
+	// Deprecated: add the key to `quit` instead.
+	QuitAlt1                     Keybinding `yaml:"quit-alt1"`
+	SuspendApp                   Keybinding `yaml:"suspendApp"`
+	Return                       Keybinding `yaml:"return"`
+	QuitWithoutChangingDirectory Keybinding `yaml:"quitWithoutChangingDirectory"`
+	TogglePanel                  Keybinding `yaml:"togglePanel"`
+	PrevItem                     Keybinding `yaml:"prevItem"`
+	NextItem                     Keybinding `yaml:"nextItem"`
+	// Deprecated: add the key to `prevItem` instead.
+	PrevItemAlt Keybinding `yaml:"prevItem-alt"`
+	// Deprecated: add the key to `nextItem` instead.
+	NextItemAlt Keybinding `yaml:"nextItem-alt"`
+	PrevPage    Keybinding `yaml:"prevPage"`
+	NextPage    Keybinding `yaml:"nextPage"`
+	ScrollLeft  Keybinding `yaml:"scrollLeft"`
+	ScrollRight Keybinding `yaml:"scrollRight"`
+	GotoTop     Keybinding `yaml:"gotoTop"`
+	GotoBottom  Keybinding `yaml:"gotoBottom"`
+	// Deprecated: add the key to `gotoTop` instead.
+	GotoTopAlt Keybinding `yaml:"gotoTop-alt"`
+	// Deprecated: add the key to `gotoBottom` instead.
+	GotoBottomAlt     Keybinding `yaml:"gotoBottom-alt"`
+	ToggleRangeSelect Keybinding `yaml:"toggleRangeSelect"`
+	RangeSelectDown   Keybinding `yaml:"rangeSelectDown"`
+	RangeSelectUp     Keybinding `yaml:"rangeSelectUp"`
+	PrevBlock         Keybinding `yaml:"prevBlock"`
+	NextBlock         Keybinding `yaml:"nextBlock"`
+	// Deprecated: add the key to `prevBlock` instead.
+	PrevBlockAlt Keybinding `yaml:"prevBlock-alt"`
+	// Deprecated: add the key to `nextBlock` instead.
+	NextBlockAlt Keybinding `yaml:"nextBlock-alt"`
+	// Deprecated: add the key to `nextBlock` instead.
+	NextBlockAlt2 Keybinding `yaml:"nextBlock-alt2"`
+	// Deprecated: add the key to `prevBlock` instead.
+	PrevBlockAlt2     Keybinding   `yaml:"prevBlock-alt2"`
+	JumpToBlock       []Keybinding `yaml:"jumpToBlock"`
+	FocusMainView     Keybinding   `yaml:"focusMainView"`
+	JumpToFile        Keybinding   `yaml:"jumpToFile"`
+	NextMatch         Keybinding   `yaml:"nextMatch"`
+	PrevMatch         Keybinding   `yaml:"prevMatch"`
+	StartSearch       Keybinding   `yaml:"startSearch"`
+	MoveWordLeft      Keybinding   `yaml:"moveWordLeft"`      // <alt+left> on Mac
+	MoveWordRight     Keybinding   `yaml:"moveWordRight"`     // <alt+right> on Mac
+	BackspaceWord     Keybinding   `yaml:"backspaceWord"`     // <alt+backspace> on Mac
+	ForwardDeleteWord Keybinding   `yaml:"forwardDeleteWord"` // <alt+delete> on Mac
+	OptionMenu        Keybinding   `yaml:"optionMenu"`
+	Select            Keybinding   `yaml:"select"`
+	GoInto            Keybinding   `yaml:"goInto"`
+	Confirm           Keybinding   `yaml:"confirm"`
+	ConfirmMenu       Keybinding   `yaml:"confirmMenu"`
+	ConfirmSuggestion Keybinding   `yaml:"confirmSuggestion"`
+	ConfirmInEditor   Keybinding   `yaml:"confirmInEditor"` // <meta+enter> on Mac
+	// Deprecated: add the key to `confirmInEditor` instead.
+	ConfirmInEditorAlt Keybinding `yaml:"confirmInEditor-alt"`
+	Remove             Keybinding `yaml:"remove"`
+	New                Keybinding `yaml:"new"`
+	NewWorktree        Keybinding `yaml:"newWorktree"`
+	Edit               Keybinding `yaml:"edit"`
+	OpenFile           Keybinding `yaml:"openFile"`
+	ScrollUpMain       Keybinding `yaml:"scrollUpMain"`
+	ScrollDownMain     Keybinding `yaml:"scrollDownMain"`
+	// Deprecated: add the key to `scrollUpMain` instead.
+	ScrollUpMainAlt1 Keybinding `yaml:"scrollUpMain-alt1"`
+	// Deprecated: add the key to `scrollDownMain` instead.
+	ScrollDownMainAlt1 Keybinding `yaml:"scrollDownMain-alt1"`
+	// Deprecated: add the key to `scrollUpMain` instead.
+	ScrollUpMainAlt2 Keybinding `yaml:"scrollUpMain-alt2"`
+	// Deprecated: add the key to `scrollDownMain` instead.
+	ScrollDownMainAlt2        Keybinding `yaml:"scrollDownMain-alt2"`
+	ExecuteShellCommand       Keybinding `yaml:"executeShellCommand"`
+	CreateRebaseOptionsMenu   Keybinding `yaml:"createRebaseOptionsMenu"`
+	Push                      Keybinding `yaml:"pushFiles"` // 'Files' appended for legacy reasons
+	Pull                      Keybinding `yaml:"pullFiles"` // 'Files' appended for legacy reasons
+	Refresh                   Keybinding `yaml:"refresh"`
+	CreatePatchOptionsMenu    Keybinding `yaml:"createPatchOptionsMenu"`
+	NextTab                   Keybinding `yaml:"nextTab"`
+	PrevTab                   Keybinding `yaml:"prevTab"`
+	NextScreenMode            Keybinding `yaml:"nextScreenMode"`
+	PrevScreenMode            Keybinding `yaml:"prevScreenMode"`
+	CycleDiffRenderers        Keybinding `yaml:"cycleDiffRenderers"`
+	CycleDiffRenderersReverse Keybinding `yaml:"cycleDiffRenderersReverse"`
+	Undo                      Keybinding `yaml:"undo"`
+	Redo                      Keybinding `yaml:"redo"`
+	FilteringMenu             Keybinding `yaml:"filteringMenu"`
+	DiffingMenu               Keybinding `yaml:"diffingMenu"`
+	// Deprecated: add the key to `diffingMenu` instead.
+	DiffingMenuAlt                    Keybinding `yaml:"diffingMenu-alt"`
+	CopyToClipboard                   Keybinding `yaml:"copyToClipboard"`
+	OpenRecentRepos                   Keybinding `yaml:"openRecentRepos"`
+	SubmitEditorText                  Keybinding `yaml:"submitEditorText"`
+	ExtrasMenu                        Keybinding `yaml:"extrasMenu"`
+	ToggleWhitespaceInDiffView        Keybinding `yaml:"toggleWhitespaceInDiffView"`
+	IncreaseContextInDiffView         Keybinding `yaml:"increaseContextInDiffView"`
+	DecreaseContextInDiffView         Keybinding `yaml:"decreaseContextInDiffView"`
+	IncreaseRenameSimilarityThreshold Keybinding `yaml:"increaseRenameSimilarityThreshold"`
+	DecreaseRenameSimilarityThreshold Keybinding `yaml:"decreaseRenameSimilarityThreshold"`
+	OpenDiffTool                      Keybinding `yaml:"openDiffTool"`
+	EditConfig                        Keybinding `yaml:"editConfig"`
 }
 
 type KeybindingStatusConfig struct {
-	CheckForUpdate             string `yaml:"checkForUpdate"`
-	RecentRepos                string `yaml:"recentRepos"`
-	AllBranchesLogGraph        string `yaml:"allBranchesLogGraph"`
-	AllBranchesLogGraphReverse string `yaml:"allBranchesLogGraphReverse"`
+	CheckForUpdate             Keybinding `yaml:"checkForUpdate"`
+	RecentRepos                Keybinding `yaml:"recentRepos"`
+	AllBranchesLogGraph        Keybinding `yaml:"allBranchesLogGraph"`
+	AllBranchesLogGraphReverse Keybinding `yaml:"allBranchesLogGraphReverse"`
 }
 
 type KeybindingFilesConfig struct {
-	CommitChanges            string `yaml:"commitChanges"`
-	CommitChangesWithoutHook string `yaml:"commitChangesWithoutHook"`
-	AmendLastCommit          string `yaml:"amendLastCommit"`
-	CommitChangesWithEditor  string `yaml:"commitChangesWithEditor"`
-	FindBaseCommitForFixup   string `yaml:"findBaseCommitForFixup"`
-	ConfirmDiscard           string `yaml:"confirmDiscard"`
-	IgnoreFile               string `yaml:"ignoreFile"`
-	RefreshFiles             string `yaml:"refreshFiles"`
-	StashAllChanges          string `yaml:"stashAllChanges"`
-	ViewStashOptions         string `yaml:"viewStashOptions"`
-	ToggleStagedAll          string `yaml:"toggleStagedAll"`
-	ViewResetOptions         string `yaml:"viewResetOptions"`
-	Fetch                    string `yaml:"fetch"`
-	ToggleTreeView           string `yaml:"toggleTreeView"`
-	OpenMergeOptions         string `yaml:"openMergeOptions"`
-	OpenStatusFilter         string `yaml:"openStatusFilter"`
-	CopyFileInfoToClipboard  string `yaml:"copyFileInfoToClipboard"`
-	CollapseAll              string `yaml:"collapseAll"`
-	ExpandAll                string `yaml:"expandAll"`
+	CommitChanges            Keybinding `yaml:"commitChanges"`
+	CommitChangesWithoutHook Keybinding `yaml:"commitChangesWithoutHook"`
+	AmendLastCommit          Keybinding `yaml:"amendLastCommit"`
+	CommitChangesWithEditor  Keybinding `yaml:"commitChangesWithEditor"`
+	FindBaseCommitForFixup   Keybinding `yaml:"findBaseCommitForFixup"`
+	ConfirmDiscard           Keybinding `yaml:"confirmDiscard"`
+	IgnoreFile               Keybinding `yaml:"ignoreFile"`
+	RefreshFiles             Keybinding `yaml:"refreshFiles"`
+	StashAllChanges          Keybinding `yaml:"stashAllChanges"`
+	ViewStashOptions         Keybinding `yaml:"viewStashOptions"`
+	ToggleStagedAll          Keybinding `yaml:"toggleStagedAll"`
+	ViewResetOptions         Keybinding `yaml:"viewResetOptions"`
+	Fetch                    Keybinding `yaml:"fetch"`
+	ToggleTreeView           Keybinding `yaml:"toggleTreeView"`
+	OpenMergeOptions         Keybinding `yaml:"openMergeOptions"`
+	OpenStatusFilter         Keybinding `yaml:"openStatusFilter"`
+	CopyFileInfoToClipboard  Keybinding `yaml:"copyFileInfoToClipboard"`
+	CollapseAll              Keybinding `yaml:"collapseAll"`
+	ExpandAll                Keybinding `yaml:"expandAll"`
 }
 
 type KeybindingBranchesConfig struct {
-	CreatePullRequest      string `yaml:"createPullRequest"`
-	ViewPullRequestOptions string `yaml:"viewPullRequestOptions"`
-	CopyPullRequestURL     string `yaml:"copyPullRequestURL"`
-	CheckoutBranchByName   string `yaml:"checkoutBranchByName"`
-	ForceCheckoutBranch    string `yaml:"forceCheckoutBranch"`
-	CheckoutPreviousBranch string `yaml:"checkoutPreviousBranch"`
-	RebaseBranch           string `yaml:"rebaseBranch"`
-	RenameBranch           string `yaml:"renameBranch"`
-	MergeIntoCurrentBranch string `yaml:"mergeIntoCurrentBranch"`
-	MoveCommitsToNewBranch string `yaml:"moveCommitsToNewBranch"`
-	ViewGitFlowOptions     string `yaml:"viewGitFlowOptions"`
-	FastForward            string `yaml:"fastForward"`
-	CreateTag              string `yaml:"createTag"`
-	PushTag                string `yaml:"pushTag"`
-	SetUpstream            string `yaml:"setUpstream"`
-	FetchRemote            string `yaml:"fetchRemote"`
-	AddForkRemote          string `yaml:"addForkRemote"`
-	SortOrder              string `yaml:"sortOrder"`
-}
-
-type KeybindingWorktreesConfig struct {
-	ViewWorktreeOptions string `yaml:"viewWorktreeOptions"`
+	CreatePullRequest        Keybinding `yaml:"createPullRequest"`
+	ViewPullRequestOptions   Keybinding `yaml:"viewPullRequestOptions"`
+	OpenPullRequestInBrowser Keybinding `yaml:"openPullRequestInBrowser"`
+	CopyPullRequestURL       Keybinding `yaml:"copyPullRequestURL"`
+	CheckoutBranchByName     Keybinding `yaml:"checkoutBranchByName"`
+	ForceCheckoutBranch      Keybinding `yaml:"forceCheckoutBranch"`
+	CheckoutPreviousBranch   Keybinding `yaml:"checkoutPreviousBranch"`
+	RebaseBranch             Keybinding `yaml:"rebaseBranch"`
+	RenameBranch             Keybinding `yaml:"renameBranch"`
+	MergeIntoCurrentBranch   Keybinding `yaml:"mergeIntoCurrentBranch"`
+	MoveCommitsToNewBranch   Keybinding `yaml:"moveCommitsToNewBranch"`
+	ViewGitFlowOptions       Keybinding `yaml:"viewGitFlowOptions"`
+	FastForward              Keybinding `yaml:"fastForward"`
+	CreateTag                Keybinding `yaml:"createTag"`
+	PushTag                  Keybinding `yaml:"pushTag"`
+	SetUpstream              Keybinding `yaml:"setUpstream"`
+	FetchRemote              Keybinding `yaml:"fetchRemote"`
+	AddForkRemote            Keybinding `yaml:"addForkRemote"`
+	SortOrder                Keybinding `yaml:"sortOrder"`
 }
 
 type KeybindingCommitsConfig struct {
-	SquashDown                     string `yaml:"squashDown"`
-	RenameCommit                   string `yaml:"renameCommit"`
-	RenameCommitWithEditor         string `yaml:"renameCommitWithEditor"`
-	ViewResetOptions               string `yaml:"viewResetOptions"`
-	MarkCommitAsFixup              string `yaml:"markCommitAsFixup"`
-	SetFixupMessage                string `yaml:"setFixupMessage"`
-	CreateFixupCommit              string `yaml:"createFixupCommit"`
-	SquashAboveCommits             string `yaml:"squashAboveCommits"`
-	MoveDownCommit                 string `yaml:"moveDownCommit"`
-	MoveUpCommit                   string `yaml:"moveUpCommit"`
-	AmendToCommit                  string `yaml:"amendToCommit"`
-	ResetCommitAuthor              string `yaml:"resetCommitAuthor"`
-	PickCommit                     string `yaml:"pickCommit"`
-	RevertCommit                   string `yaml:"revertCommit"`
-	CherryPickCopy                 string `yaml:"cherryPickCopy"`
-	PasteCommits                   string `yaml:"pasteCommits"`
-	MarkCommitAsBaseForRebase      string `yaml:"markCommitAsBaseForRebase"`
-	CreateTag                      string `yaml:"tagCommit"`
-	CheckoutCommit                 string `yaml:"checkoutCommit"`
-	ResetCherryPick                string `yaml:"resetCherryPick"`
-	CopyCommitAttributeToClipboard string `yaml:"copyCommitAttributeToClipboard"`
-	OpenLogMenu                    string `yaml:"openLogMenu"`
-	OpenInBrowser                  string `yaml:"openInBrowser"`
-	ViewBisectOptions              string `yaml:"viewBisectOptions"`
-	StartInteractiveRebase         string `yaml:"startInteractiveRebase"`
-	SelectCommitsOfCurrentBranch   string `yaml:"selectCommitsOfCurrentBranch"`
+	SquashDown                     Keybinding `yaml:"squashDown"`
+	RenameCommit                   Keybinding `yaml:"renameCommit"`
+	RenameCommitWithEditor         Keybinding `yaml:"renameCommitWithEditor"`
+	ViewResetOptions               Keybinding `yaml:"viewResetOptions"`
+	MarkCommitAsFixup              Keybinding `yaml:"markCommitAsFixup"`
+	SetFixupMessage                Keybinding `yaml:"setFixupMessage"`
+	CreateFixupCommit              Keybinding `yaml:"createFixupCommit"`
+	SquashAboveCommits             Keybinding `yaml:"squashAboveCommits"`
+	MoveDownCommit                 Keybinding `yaml:"moveDownCommit"`
+	MoveUpCommit                   Keybinding `yaml:"moveUpCommit"`
+	AmendToCommit                  Keybinding `yaml:"amendToCommit"`
+	ResetCommitAuthor              Keybinding `yaml:"resetCommitAuthor"`
+	PickCommit                     Keybinding `yaml:"pickCommit"`
+	RevertCommit                   Keybinding `yaml:"revertCommit"`
+	CherryPickCopy                 Keybinding `yaml:"cherryPickCopy"`
+	PasteCommits                   Keybinding `yaml:"pasteCommits"`
+	MarkCommitAsBaseForRebase      Keybinding `yaml:"markCommitAsBaseForRebase"`
+	CreateTag                      Keybinding `yaml:"tagCommit"`
+	CheckoutCommit                 Keybinding `yaml:"checkoutCommit"`
+	ResetCherryPick                Keybinding `yaml:"resetCherryPick"`
+	CopyCommitAttributeToClipboard Keybinding `yaml:"copyCommitAttributeToClipboard"`
+	OpenLogMenu                    Keybinding `yaml:"openLogMenu"`
+	OpenInBrowser                  Keybinding `yaml:"openInBrowser"`
+	OpenPullRequestInBrowser       Keybinding `yaml:"openPullRequestInBrowser"`
+	ViewBisectOptions              Keybinding `yaml:"viewBisectOptions"`
+	StartInteractiveRebase         Keybinding `yaml:"startInteractiveRebase"`
+	SelectCommitsOfCurrentBranch   Keybinding `yaml:"selectCommitsOfCurrentBranch"`
 }
 
 type KeybindingAmendAttributeConfig struct {
-	ResetAuthor string `yaml:"resetAuthor"`
-	SetAuthor   string `yaml:"setAuthor"`
-	AddCoAuthor string `yaml:"addCoAuthor"`
+	ResetAuthor Keybinding `yaml:"resetAuthor"`
+	SetAuthor   Keybinding `yaml:"setAuthor"`
+	AddCoAuthor Keybinding `yaml:"addCoAuthor"`
 }
 
 type KeybindingStashConfig struct {
-	PopStash    string `yaml:"popStash"`
-	RenameStash string `yaml:"renameStash"`
+	PopStash    Keybinding `yaml:"popStash"`
+	RenameStash Keybinding `yaml:"renameStash"`
 }
 
 type KeybindingCommitFilesConfig struct {
-	CheckoutCommitFile string `yaml:"checkoutCommitFile"`
+	CheckoutCommitFile Keybinding `yaml:"checkoutCommitFile"`
 }
 
 type KeybindingMainConfig struct {
-	ToggleSelectHunk string `yaml:"toggleSelectHunk"`
-	PickBothHunks    string `yaml:"pickBothHunks"`
-	EditSelectHunk   string `yaml:"editSelectHunk"`
+	PrevHunk         Keybinding `yaml:"prevHunk"`
+	NextHunk         Keybinding `yaml:"nextHunk"`
+	PrevFile         Keybinding `yaml:"prevFile"`
+	NextFile         Keybinding `yaml:"nextFile"`
+	ToggleSelectHunk Keybinding `yaml:"toggleSelectHunk"`
+	PickBothHunks    Keybinding `yaml:"pickBothHunks"`
+	EditSelectHunk   Keybinding `yaml:"editSelectHunk"`
 }
 
 type KeybindingSubmodulesConfig struct {
-	Init     string `yaml:"init"`
-	Update   string `yaml:"update"`
-	BulkMenu string `yaml:"bulkMenu"`
+	Init     Keybinding `yaml:"init"`
+	Update   Keybinding `yaml:"update"`
+	BulkMenu Keybinding `yaml:"bulkMenu"`
 }
 
 type KeybindingCommitMessageConfig struct {
-	CommitMenu string `yaml:"commitMenu"`
+	CommitMenu Keybinding `yaml:"commitMenu"`
 }
 
 // OSConfig contains config on the level of the os
@@ -652,8 +743,8 @@ type CustomCommandAfterHook struct {
 }
 
 type CustomCommand struct {
-	// The key to trigger the command. Use a single letter or one of the values from https://github.com/jesseduffield/lazygit/blob/master/docs/keybindings/Custom_Keybindings.md
-	Key string `yaml:"key"`
+	// The key to trigger the command. Use a single letter or one of the values from https://github.com/jesseduffield/lazygit/blob/master/docs/keybindings/Custom_Keybindings.md. To bind several alternates to the same command, use a sequence (e.g. `[a, b]`).
+	Key Keybinding `yaml:"key"`
 	// Instead of defining a single custom command, create a menu of custom commands. Useful for grouping related commands together under a single keybinding, and for keeping them out of the global keybindings menu.
 	// When using this, all other fields except Key and Description are ignored and must be empty.
 	CommandMenu []CustomCommand `yaml:"commandMenu"`
@@ -719,6 +810,9 @@ type CustomCommandPrompt struct {
 	// Like valueFormat but for the labels. If `labelFormat` is not specified, `valueFormat` is shown instead.
 	// Only for menuFromCommand prompts.
 	LabelFormat string `yaml:"labelFormat" jsonschema:"example={{ .branch | green }}"`
+
+	// A Go template expression evaluated against the current form state. If it resolves to empty string or 'false', the prompt is skipped.
+	Condition string `yaml:"condition" jsonschema:"example={{ eq .Form.Choice \"yes\" }}"`
 }
 
 type CustomCommandSuggestions struct {
@@ -735,8 +829,8 @@ type CustomCommandMenuOption struct {
 	Description string `yaml:"description"`
 	// The value that will be used in the command
 	Value string `yaml:"value" jsonschema:"example=feature,minLength=1"`
-	// Keybinding to invoke this menu option without needing to navigate to it
-	Key string `yaml:"key"`
+	// Keybinding to invoke this menu option without needing to navigate to it. Accepts either a single key or a sequence of alternates.
+	Key Keybinding `yaml:"key"`
 }
 
 type CustomIconsConfig struct {
@@ -751,41 +845,77 @@ type IconProperties struct {
 	Color string `yaml:"color"`
 }
 
+// MergeLegacyAltKeybindings folds deprecated `*Alt*` fields into their
+// corresponding multi-key main field. New code should treat the main field
+// as the single source of truth; the alt fields will be removed in a future
+// release.
+func (c *KeybindingConfig) MergeLegacyAltKeybindings() {
+	mergeLegacyAlt(&c.Universal.Quit, c.Universal.QuitAlt1)
+	mergeLegacyAlt(&c.Universal.PrevItem, c.Universal.PrevItemAlt)
+	mergeLegacyAlt(&c.Universal.NextItem, c.Universal.NextItemAlt)
+	mergeLegacyAlt(&c.Universal.GotoTop, c.Universal.GotoTopAlt)
+	mergeLegacyAlt(&c.Universal.GotoBottom, c.Universal.GotoBottomAlt)
+	mergeLegacyAlt(&c.Universal.PrevBlock, c.Universal.PrevBlockAlt)
+	mergeLegacyAlt(&c.Universal.NextBlock, c.Universal.NextBlockAlt)
+	mergeLegacyAlt(&c.Universal.PrevBlock, c.Universal.PrevBlockAlt2)
+	mergeLegacyAlt(&c.Universal.NextBlock, c.Universal.NextBlockAlt2)
+	mergeLegacyAlt(&c.Universal.ConfirmInEditor, c.Universal.ConfirmInEditorAlt)
+	mergeLegacyAlt(&c.Universal.ScrollUpMain, c.Universal.ScrollUpMainAlt1)
+	mergeLegacyAlt(&c.Universal.ScrollUpMain, c.Universal.ScrollUpMainAlt2)
+	mergeLegacyAlt(&c.Universal.ScrollDownMain, c.Universal.ScrollDownMainAlt1)
+	mergeLegacyAlt(&c.Universal.ScrollDownMain, c.Universal.ScrollDownMainAlt2)
+	mergeLegacyAlt(&c.Universal.DiffingMenu, c.Universal.DiffingMenuAlt)
+}
+
 func GetDefaultConfig() *UserConfig {
+	// This is only for tests; we don't want to use the test runner's host platform in that case,
+	// but always use the fallback bindings
+	return GetDefaultConfigForPlatform("")
+}
+
+func GetDefaultConfigForPlatform(platform string) *UserConfig {
 	return &UserConfig{
 		Gui: GuiConfig{
-			ScrollHeight:             2,
-			ScrollPastBottom:         true,
-			ScrollOffMargin:          2,
-			ScrollOffBehavior:        "margin",
-			TabWidth:                 4,
-			MouseEvents:              true,
-			SkipAmendWarning:         false,
-			SkipDiscardChangeWarning: false,
-			SkipStashWarning:         false,
-			SidePanelWidth:           0.3333,
-			ExpandFocusedSidePanel:   false,
-			ExpandedSidePanelWeight:  2,
+			ScrollHeight:              2,
+			ScrollPastBottom:          true,
+			ScrollOffMargin:           2,
+			ScrollOffBehavior:         "margin",
+			TabWidth:                  4,
+			MouseEvents:               true,
+			SkipAmendWarning:          false,
+			SkipDiscardChangeWarning:  false,
+			SkipStashWarning:          false,
+			SidePanelWidth:            0.3333,
+			ExpandFocusedSidePanel:    false,
+			ExpandedSidePanelWeight:   2,
+			ShrinkSidePanelsToContent: false,
+			SidePanels: []SidePanel{
+				{"status"},
+				{"files", "worktrees", "submodules"},
+				{"branches", "remotes", "tags"},
+				{"commits", "reflog"},
+				{"stash"},
+			},
 			MainPanelSplitMode:       "flexible",
 			EnlargedSideViewLocation: "left",
-			WrapLinesInStagingView:   true,
-			UseHunkModeInStagingView: true,
+			WrapLinesInDiffView:      true,
+			UseHunkModeInDiffView:    true,
 			Language:                 "auto",
 			TimeFormat:               "02 Jan 06",
 			ShortTimeFormat:          time.Kitchen,
+			ColorScheme:              "auto",
 			Theme: ThemeConfig{
-				ActiveBorderColor:               []string{"green", "bold"},
-				SearchingActiveBorderColor:      []string{"cyan", "bold"},
-				InactiveBorderColor:             []string{"default"},
-				OptionsTextColor:                []string{"blue"},
-				SelectedLineBgColor:             []string{"blue"},
-				InactiveViewSelectedLineBgColor: []string{"bold"},
-				CherryPickedCommitBgColor:       []string{"cyan"},
-				CherryPickedCommitFgColor:       []string{"blue"},
-				MarkedBaseCommitBgColor:         []string{"yellow"},
-				MarkedBaseCommitFgColor:         []string{"blue"},
-				UnstagedChangesColor:            []string{"red"},
-				DefaultFgColor:                  []string{"default"},
+				ActiveBorderColor:          []string{"green", "bold"},
+				SearchingActiveBorderColor: []string{"cyan", "bold"},
+				InactiveBorderColor:        []string{"default"},
+				OptionsTextColor:           []string{"blue"},
+				SelectedLineFgColor:        []string{"bold"},
+				CherryPickedCommitBgColor:  []string{"cyan"},
+				CherryPickedCommitFgColor:  []string{"blue"},
+				MarkedBaseCommitBgColor:    []string{"yellow"},
+				MarkedBaseCommitFgColor:    []string{"blue"},
+				UnstagedChangesColor:       []string{"red"},
+				DefaultFgColor:             []string{"default"},
 			},
 			CommitLength:                        CommitLengthConfig{Show: true},
 			SkipNoStagedFilesWarning:            false,
@@ -795,11 +925,14 @@ func GetDefaultConfig() *UserConfig {
 			ShowPanelJumps:                      true,
 			ShowFileTree:                        true,
 			ShowRootItemInFileTree:              true,
+			FileTreeSortOrder:                   "mixed",
+			FileTreeSortCaseSensitive:           true,
 			ShowNumstatInFilesView:              false,
 			ShowRandomTip:                       true,
 			ShowIcons:                           false,
 			NerdFontsVersion:                    "",
 			ShowFileIcons:                       true,
+			CommitGraphStyle:                    "auto",
 			CommitAuthorShortLength:             2,
 			CommitAuthorLongLength:              17,
 			CommitHashLength:                    8,
@@ -813,10 +946,12 @@ func GetDefaultConfig() *UserConfig {
 			Border:                              "rounded",
 			AnimateExplosion:                    true,
 			PortraitMode:                        "auto",
+			PortraitModeAutoMaxWidth:            84,
+			PortraitModeAutoMinHeight:           46,
 			FilterMode:                          "substring",
 			Spinner: SpinnerConfig{
-				Frames: []string{"|", "/", "-", "\\"},
-				Rate:   50,
+				Frames: []string{"●∙∙", "∙●∙", "∙∙●", "∙●∙"},
+				Rate:   180,
 			},
 			StatusPanelView:              "dashboard",
 			SwitchToFilesAfterStashPop:   true,
@@ -845,6 +980,7 @@ func GetDefaultConfig() *UserConfig {
 			MainBranches:                 []string{"master", "main"},
 			AutoFetch:                    true,
 			AutoRefresh:                  true,
+			AutoDetectExternalChanges:    true,
 			AutoForwardBranches:          "onlyMainBranches",
 			FetchAll:                     true,
 			AutoStageResolvedConflicts:   true,
@@ -859,9 +995,13 @@ func GetDefaultConfig() *UserConfig {
 			ParseEmoji:                   false,
 			TruncateCopiedCommitHashesTo: 12,
 		},
+		Worktree: WorktreeConfig{
+			DefaultPath: "",
+		},
 		Refresher: RefresherConfig{
-			RefreshInterval: 10,
-			FetchInterval:   60,
+			RefreshInterval:             10,
+			FetchInterval:               60,
+			ExternalChangeCheckInterval: 2,
 		},
 		Update: UpdateConfig{
 			Method: "prompt",
@@ -877,187 +1017,204 @@ func GetDefaultConfig() *UserConfig {
 		PromptToReturnFromSubprocess: true,
 		Keybinding: KeybindingConfig{
 			Universal: KeybindingUniversalConfig{
-				Quit:                              "q",
-				QuitAlt1:                          "<c-c>",
-				SuspendApp:                        "<c-z>",
-				Return:                            "<esc>",
-				QuitWithoutChangingDirectory:      "Q",
-				TogglePanel:                       "<tab>",
-				PrevItem:                          "<up>",
-				NextItem:                          "<down>",
-				PrevItemAlt:                       "k",
-				NextItemAlt:                       "j",
-				PrevPage:                          ",",
-				NextPage:                          ".",
-				ScrollLeft:                        "H",
-				ScrollRight:                       "L",
-				GotoTop:                           "<",
-				GotoBottom:                        ">",
-				GotoTopAlt:                        "<home>",
-				GotoBottomAlt:                     "<end>",
-				ToggleRangeSelect:                 "v",
-				RangeSelectDown:                   "<s-down>",
-				RangeSelectUp:                     "<s-up>",
-				PrevBlock:                         "<left>",
-				NextBlock:                         "<right>",
-				PrevBlockAlt:                      "h",
-				NextBlockAlt:                      "l",
-				PrevBlockAlt2:                     "<backtab>",
-				NextBlockAlt2:                     "<tab>",
-				JumpToBlock:                       []string{"1", "2", "3", "4", "5"},
-				FocusMainView:                     "0",
-				NextMatch:                         "n",
-				PrevMatch:                         "N",
-				StartSearch:                       "/",
-				OptionMenu:                        "<disabled>",
-				OptionMenuAlt1:                    "?",
-				Select:                            "<space>",
-				GoInto:                            "<enter>",
-				Confirm:                           "<enter>",
-				ConfirmMenu:                       "<enter>",
-				ConfirmSuggestion:                 "<enter>",
-				ConfirmInEditor:                   "<a-enter>",
-				ConfirmInEditorAlt:                "<c-s>",
-				Remove:                            "d",
-				New:                               "n",
-				Edit:                              "e",
-				OpenFile:                          "o",
-				OpenRecentRepos:                   "<c-r>",
-				ScrollUpMain:                      "<pgup>",
-				ScrollDownMain:                    "<pgdown>",
-				ScrollUpMainAlt1:                  "K",
-				ScrollDownMainAlt1:                "J",
-				ScrollUpMainAlt2:                  "<c-u>",
-				ScrollDownMainAlt2:                "<c-d>",
-				ExecuteShellCommand:               ":",
-				CreateRebaseOptionsMenu:           "m",
-				Push:                              "P",
-				Pull:                              "p",
-				Refresh:                           "R",
-				CreatePatchOptionsMenu:            "<c-p>",
-				NextTab:                           "]",
-				PrevTab:                           "[",
-				NextScreenMode:                    "+",
-				PrevScreenMode:                    "_",
-				CyclePagers:                       "|",
-				Undo:                              "z",
-				Redo:                              "Z",
-				FilteringMenu:                     "<c-s>",
-				DiffingMenu:                       "W",
-				DiffingMenuAlt:                    "<c-e>",
-				CopyToClipboard:                   "<c-o>",
-				SubmitEditorText:                  "<enter>",
-				ExtrasMenu:                        "@",
-				ToggleWhitespaceInDiffView:        "<c-w>",
-				IncreaseContextInDiffView:         "}",
-				DecreaseContextInDiffView:         "{",
-				IncreaseRenameSimilarityThreshold: ")",
-				DecreaseRenameSimilarityThreshold: "(",
-				OpenDiffTool:                      "<c-t>",
+				Quit:                              Keybinding{"q"},
+				QuitAlt1:                          Keybinding{"<ctrl+c>"},
+				SuspendApp:                        Keybinding{"<ctrl+z>"},
+				Return:                            Keybinding{"<esc>"},
+				QuitWithoutChangingDirectory:      Keybinding{"Q"},
+				TogglePanel:                       Keybinding{"<tab>"},
+				PrevItem:                          Keybinding{"<up>"},
+				NextItem:                          Keybinding{"<down>"},
+				PrevItemAlt:                       Keybinding{"k"},
+				NextItemAlt:                       Keybinding{"j"},
+				PrevPage:                          Keybinding{","},
+				NextPage:                          Keybinding{"."},
+				ScrollLeft:                        Keybinding{"H"},
+				ScrollRight:                       Keybinding{"L"},
+				GotoTop:                           Keybinding{"<"},
+				GotoBottom:                        Keybinding{">"},
+				GotoTopAlt:                        Keybinding{"<home>"},
+				GotoBottomAlt:                     Keybinding{"<end>"},
+				ToggleRangeSelect:                 Keybinding{"v"},
+				RangeSelectDown:                   Keybinding{"<shift+down>"},
+				RangeSelectUp:                     Keybinding{"<shift+up>"},
+				PrevBlock:                         Keybinding{"<left>"},
+				NextBlock:                         Keybinding{"<right>"},
+				PrevBlockAlt:                      Keybinding{"h"},
+				NextBlockAlt:                      Keybinding{"l"},
+				PrevBlockAlt2:                     Keybinding{"<backtab>"},
+				NextBlockAlt2:                     Keybinding{"<tab>"},
+				JumpToBlock:                       []Keybinding{{"1"}, {"2"}, {"3"}, {"4"}, {"5"}},
+				FocusMainView:                     Keybinding{"0"},
+				JumpToFile:                        Keybinding{"<ctrl+g>"},
+				NextMatch:                         Keybinding{"n"},
+				PrevMatch:                         Keybinding{"N"},
+				StartSearch:                       Keybinding{"/"},
+				MoveWordLeft:                      Keybinding{platformKeyBinding(platform, map[string]string{"darwin": "<alt+left>"}, "<ctrl+left>")},
+				MoveWordRight:                     Keybinding{platformKeyBinding(platform, map[string]string{"darwin": "<alt+right>"}, "<ctrl+right>")},
+				BackspaceWord:                     Keybinding{platformKeyBinding(platform, map[string]string{"darwin": "<alt+backspace>"}, "<ctrl+backspace>")},
+				ForwardDeleteWord:                 Keybinding{platformKeyBinding(platform, map[string]string{"darwin": "<alt+delete>"}, "<ctrl+delete>")},
+				OptionMenu:                        Keybinding{"?"},
+				Select:                            Keybinding{"<space>"},
+				GoInto:                            Keybinding{"<enter>"},
+				Confirm:                           Keybinding{"<enter>"},
+				ConfirmMenu:                       Keybinding{"<enter>"},
+				ConfirmSuggestion:                 Keybinding{"<enter>"},
+				ConfirmInEditor:                   Keybinding{platformKeyBinding(platform, map[string]string{"darwin": "<meta+enter>"}, "<ctrl+enter>")},
+				ConfirmInEditorAlt:                Keybinding{"<ctrl+s>"},
+				Remove:                            Keybinding{"d"},
+				New:                               Keybinding{"n"},
+				NewWorktree:                       Keybinding{"w"},
+				Edit:                              Keybinding{"e"},
+				OpenFile:                          Keybinding{"o"},
+				OpenRecentRepos:                   Keybinding{"<ctrl+r>"},
+				ScrollUpMain:                      Keybinding{"<pgup>"},
+				ScrollDownMain:                    Keybinding{"<pgdown>"},
+				ScrollUpMainAlt1:                  Keybinding{"K"},
+				ScrollDownMainAlt1:                Keybinding{"J"},
+				ScrollUpMainAlt2:                  Keybinding{"<ctrl+u>"},
+				ScrollDownMainAlt2:                Keybinding{"<ctrl+d>"},
+				ExecuteShellCommand:               Keybinding{":"},
+				CreateRebaseOptionsMenu:           Keybinding{"m"},
+				Push:                              Keybinding{"P"},
+				Pull:                              Keybinding{"p"},
+				Refresh:                           Keybinding{"R"},
+				CreatePatchOptionsMenu:            Keybinding{"<ctrl+p>"},
+				NextTab:                           Keybinding{"]"},
+				PrevTab:                           Keybinding{"["},
+				NextScreenMode:                    Keybinding{"+"},
+				PrevScreenMode:                    Keybinding{"_"},
+				CycleDiffRenderers:                Keybinding{"|"},
+				CycleDiffRenderersReverse:         Keybinding{"\\"},
+				Undo:                              Keybinding{"z"},
+				Redo:                              Keybinding{"Z"},
+				FilteringMenu:                     Keybinding{"<ctrl+s>"},
+				DiffingMenu:                       Keybinding{"W"},
+				DiffingMenuAlt:                    Keybinding{"<ctrl+e>"},
+				CopyToClipboard:                   Keybinding{"<ctrl+o>"},
+				SubmitEditorText:                  Keybinding{"<enter>"},
+				ExtrasMenu:                        Keybinding{"@"},
+				ToggleWhitespaceInDiffView:        Keybinding{"<ctrl+w>"},
+				IncreaseContextInDiffView:         Keybinding{"}"},
+				DecreaseContextInDiffView:         Keybinding{"{"},
+				IncreaseRenameSimilarityThreshold: Keybinding{")"},
+				DecreaseRenameSimilarityThreshold: Keybinding{"("},
+				OpenDiffTool:                      Keybinding{"<ctrl+t>"},
+				EditConfig:                        Keybinding{"<alt+shift+c>"},
 			},
 			Status: KeybindingStatusConfig{
-				CheckForUpdate:             "u",
-				RecentRepos:                "<enter>",
-				AllBranchesLogGraph:        "a",
-				AllBranchesLogGraphReverse: "A",
+				CheckForUpdate:             Keybinding{"u"},
+				RecentRepos:                Keybinding{"<enter>"},
+				AllBranchesLogGraph:        Keybinding{"a"},
+				AllBranchesLogGraphReverse: Keybinding{"A"},
 			},
 			Files: KeybindingFilesConfig{
-				CommitChanges:            "c",
-				CommitChangesWithoutHook: "w",
-				AmendLastCommit:          "A",
-				CommitChangesWithEditor:  "C",
-				FindBaseCommitForFixup:   "<c-f>",
-				IgnoreFile:               "i",
-				RefreshFiles:             "r",
-				StashAllChanges:          "s",
-				ViewStashOptions:         "S",
-				ToggleStagedAll:          "a",
-				ViewResetOptions:         "D",
-				Fetch:                    "f",
-				ToggleTreeView:           "`",
-				OpenMergeOptions:         "M",
-				OpenStatusFilter:         "<c-b>",
-				ConfirmDiscard:           "x",
-				CopyFileInfoToClipboard:  "y",
-				CollapseAll:              "-",
-				ExpandAll:                "=",
+				CommitChanges:            Keybinding{"c"},
+				CommitChangesWithoutHook: Keybinding{"w"},
+				AmendLastCommit:          Keybinding{"A"},
+				CommitChangesWithEditor:  Keybinding{"C"},
+				FindBaseCommitForFixup:   Keybinding{"<ctrl+f>"},
+				IgnoreFile:               Keybinding{"i"},
+				RefreshFiles:             Keybinding{"r"},
+				StashAllChanges:          Keybinding{"s"},
+				ViewStashOptions:         Keybinding{"S"},
+				ToggleStagedAll:          Keybinding{"a"},
+				ViewResetOptions:         Keybinding{"D"},
+				Fetch:                    Keybinding{"f"},
+				ToggleTreeView:           Keybinding{"`"},
+				OpenMergeOptions:         Keybinding{"M"},
+				OpenStatusFilter:         Keybinding{"<ctrl+b>"},
+				ConfirmDiscard:           Keybinding{"x"},
+				CopyFileInfoToClipboard:  Keybinding{"y"},
+				CollapseAll:              Keybinding{"-"},
+				ExpandAll:                Keybinding{"="},
 			},
 			Branches: KeybindingBranchesConfig{
-				CopyPullRequestURL:     "<c-y>",
-				CreatePullRequest:      "o",
-				ViewPullRequestOptions: "O",
-				CheckoutBranchByName:   "c",
-				ForceCheckoutBranch:    "F",
-				CheckoutPreviousBranch: "-",
-				RebaseBranch:           "r",
-				RenameBranch:           "R",
-				MergeIntoCurrentBranch: "M",
-				MoveCommitsToNewBranch: "N",
-				ViewGitFlowOptions:     "i",
-				FastForward:            "f",
-				CreateTag:              "T",
-				PushTag:                "P",
-				SetUpstream:            "u",
-				FetchRemote:            "f",
-				AddForkRemote:          "F",
-				SortOrder:              "s",
-			},
-			Worktrees: KeybindingWorktreesConfig{
-				ViewWorktreeOptions: "w",
+				CopyPullRequestURL:       Keybinding{"<ctrl+y>"},
+				CreatePullRequest:        Keybinding{"o"},
+				ViewPullRequestOptions:   Keybinding{"O"},
+				OpenPullRequestInBrowser: Keybinding{"G"},
+				CheckoutBranchByName:     Keybinding{"c"},
+				ForceCheckoutBranch:      Keybinding{"F"},
+				CheckoutPreviousBranch:   Keybinding{"-"},
+				RebaseBranch:             Keybinding{"r"},
+				RenameBranch:             Keybinding{"R"},
+				MergeIntoCurrentBranch:   Keybinding{"M"},
+				MoveCommitsToNewBranch:   Keybinding{"N"},
+				ViewGitFlowOptions:       Keybinding{"i"},
+				FastForward:              Keybinding{"f"},
+				CreateTag:                Keybinding{"T"},
+				PushTag:                  Keybinding{"P"},
+				SetUpstream:              Keybinding{"u"},
+				FetchRemote:              Keybinding{"f"},
+				AddForkRemote:            Keybinding{"F"},
+				SortOrder:                Keybinding{"s"},
 			},
 			Commits: KeybindingCommitsConfig{
-				SquashDown:                     "s",
-				RenameCommit:                   "r",
-				RenameCommitWithEditor:         "R",
-				ViewResetOptions:               "g",
-				MarkCommitAsFixup:              "f",
-				SetFixupMessage:                "c",
-				CreateFixupCommit:              "F",
-				SquashAboveCommits:             "S",
-				MoveDownCommit:                 "<c-j>",
-				MoveUpCommit:                   "<c-k>",
-				AmendToCommit:                  "A",
-				ResetCommitAuthor:              "a",
-				PickCommit:                     "p",
-				RevertCommit:                   "t",
-				CherryPickCopy:                 "C",
-				PasteCommits:                   "V",
-				MarkCommitAsBaseForRebase:      "B",
-				CreateTag:                      "T",
-				CheckoutCommit:                 "<space>",
-				ResetCherryPick:                "<c-R>",
-				CopyCommitAttributeToClipboard: "y",
-				OpenLogMenu:                    "<c-l>",
-				OpenInBrowser:                  "o",
-				ViewBisectOptions:              "b",
-				StartInteractiveRebase:         "i",
-				SelectCommitsOfCurrentBranch:   "*",
+				SquashDown:                     Keybinding{"s"},
+				RenameCommit:                   Keybinding{"r"},
+				RenameCommitWithEditor:         Keybinding{"R"},
+				ViewResetOptions:               Keybinding{"g"},
+				MarkCommitAsFixup:              Keybinding{"f"},
+				SetFixupMessage:                Keybinding{"c"},
+				CreateFixupCommit:              Keybinding{"F"},
+				SquashAboveCommits:             Keybinding{"S"},
+				MoveDownCommit:                 Keybinding{"<ctrl+j>", "<alt-down>"},
+				MoveUpCommit:                   Keybinding{"<ctrl+k>", "<alt-up>"},
+				AmendToCommit:                  Keybinding{"A"},
+				ResetCommitAuthor:              Keybinding{"a"},
+				PickCommit:                     Keybinding{"p"},
+				RevertCommit:                   Keybinding{"t"},
+				CherryPickCopy:                 Keybinding{"C"},
+				PasteCommits:                   Keybinding{"V"},
+				MarkCommitAsBaseForRebase:      Keybinding{"B"},
+				CreateTag:                      Keybinding{"T"},
+				CheckoutCommit:                 Keybinding{"<space>"},
+				ResetCherryPick:                Keybinding{"<ctrl+r>"},
+				CopyCommitAttributeToClipboard: Keybinding{"y"},
+				OpenLogMenu:                    Keybinding{"<ctrl+l>"},
+				OpenInBrowser:                  Keybinding{"o"},
+				OpenPullRequestInBrowser:       Keybinding{"G"},
+				ViewBisectOptions:              Keybinding{"b"},
+				StartInteractiveRebase:         Keybinding{"i"},
+				SelectCommitsOfCurrentBranch:   Keybinding{"*"},
 			},
 			AmendAttribute: KeybindingAmendAttributeConfig{
-				ResetAuthor: "a",
-				SetAuthor:   "A",
-				AddCoAuthor: "c",
+				ResetAuthor: Keybinding{"a"},
+				SetAuthor:   Keybinding{"A"},
+				AddCoAuthor: Keybinding{"c"},
 			},
 			Stash: KeybindingStashConfig{
-				PopStash:    "g",
-				RenameStash: "r",
+				PopStash:    Keybinding{"g"},
+				RenameStash: Keybinding{"r"},
 			},
 			CommitFiles: KeybindingCommitFilesConfig{
-				CheckoutCommitFile: "c",
+				CheckoutCommitFile: Keybinding{"c"},
 			},
 			Main: KeybindingMainConfig{
-				ToggleSelectHunk: "a",
-				PickBothHunks:    "b",
-				EditSelectHunk:   "E",
+				PrevHunk:         Keybinding{"<left>", "h"},
+				NextHunk:         Keybinding{"<right>", "l"},
+				PrevFile:         Keybinding{"N"},
+				NextFile:         Keybinding{"n"},
+				ToggleSelectHunk: Keybinding{"a"},
+				PickBothHunks:    Keybinding{"b"},
+				EditSelectHunk:   Keybinding{"E"},
 			},
 			Submodules: KeybindingSubmodulesConfig{
-				Init:     "i",
-				Update:   "u",
-				BulkMenu: "b",
+				Init:     Keybinding{"i"},
+				Update:   Keybinding{"u"},
+				BulkMenu: Keybinding{"b"},
 			},
 			CommitMessage: KeybindingCommitMessageConfig{
-				CommitMenu: "<c-o>",
+				CommitMenu: Keybinding{"<ctrl+o>"},
 			},
 		},
 	}
+}
+
+func platformKeyBinding(platform string, bindingByPlatform map[string]string, fallback string) string {
+	if binding, ok := bindingByPlatform[platform]; ok {
+		return binding
+	}
+	return fallback
 }

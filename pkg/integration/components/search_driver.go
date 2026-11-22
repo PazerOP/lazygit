@@ -1,7 +1,7 @@
 package components
 
 // TODO: soft-code this
-const ClearKey = "<c-u>"
+const ClearKey = "<ctrl+u>"
 
 type SearchDriver struct {
 	t *TestDriver
@@ -20,6 +20,13 @@ func (self *SearchDriver) InitialText(expected *TextMatcher) *SearchDriver {
 
 func (self *SearchDriver) Type(value string) *SearchDriver {
 	self.t.typeContent(value)
+
+	return self
+}
+
+// pastes the text the way a terminal does it
+func (self *SearchDriver) Paste(text string) *SearchDriver {
+	self.t.paste(text)
 
 	return self
 }

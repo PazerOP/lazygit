@@ -61,6 +61,7 @@ func AddCoAuthorToMessage(message string, author string) string {
 }
 
 func AddCoAuthorToDescription(description string, author string) string {
+	description = strings.TrimRight(description, "\n")
 	if description != "" {
 		lines := strings.Split(description, "\n")
 		if strings.HasPrefix(lines[len(lines)-1], "Co-authored-by:") {
@@ -239,24 +240,16 @@ func (self *CommitCommands) AmendHeadCmdObj() *oscommands.CmdObj {
 	return self.cmd.New(cmdArgs)
 }
 
-func (self *CommitCommands) ShowCmdObj(hash string, filterPaths []string) *oscommands.CmdObj {
-	contextSize := self.UserConfig().Git.DiffContextSize
-
-	extDiffCmd := self.pagerConfig.GetExternalDiffCommand()
-	useExtDiffGitConfig := self.pagerConfig.GetUseExternalDiffGitConfig()
+func (self *CommitCommands) ShowCmdObj(hash string, filterPaths []string, mode DiffMode) *oscommands.CmdObj {
 	cmdArgs := NewGitCmd("show").
-		Config("diff.noprefix=false").
-		ConfigIf(extDiffCmd != "", "diff.external="+extDiffCmd).
-		ArgIfElse(extDiffCmd != "" || useExtDiffGitConfig, "--ext-diff", "--no-ext-diff").
+		ParseableDiffPrefixes().
+		AddCommonDiffArgs(self.diffRendererConfigManager, self.UserConfig(), mode).
 		Arg("--submodule").
-		Arg("--color="+self.pagerConfig.GetColorArg()).
-		Arg(fmt.Sprintf("--unified=%d", contextSize)).
+		Arg("--color=" + mode.colorArg(self.diffRendererConfigManager)).
 		Arg("--stat").
 		Arg("--decorate").
 		Arg("-p").
 		Arg(hash).
-		ArgIf(self.UserConfig().Git.IgnoreWhitespaceInDiffView, "--ignore-all-space").
-		Arg(fmt.Sprintf("--find-renames=%d%%", self.UserConfig().Git.RenameSimilarityThreshold)).
 		Arg("--").
 		Arg(filterPaths...).
 		Dir(self.repoPaths.worktreePath).
@@ -282,7 +275,10 @@ func (self *CommitCommands) Revert(hashes []string, isMerge bool) error {
 		Arg(hashes...).
 		ToArgv()
 
-	return self.cmd.New(cmdArgs).Run()
+	return abortSequenceAfterLockError(self.cmd.New(cmdArgs), self.repoPaths.WorktreeGitDirPath(), len(hashes),
+		func() *oscommands.CmdObj {
+			return self.cmd.New(NewGitCmd("revert").Arg("--abort").ToArgv())
+		}).Run()
 }
 
 // CreateFixupCommit creates a commit that fixes up a previous commit

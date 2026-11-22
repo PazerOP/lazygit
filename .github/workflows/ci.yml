@@ -1,7 +1,7 @@
 name: Continuous Integration
 
 env:
-  GO_VERSION: 1.25
+  GO_VERSION: 1.26.x
 
 on:
   push:
@@ -28,21 +28,14 @@ jobs:
       GOFLAGS: -mod=vendor
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: 1.25.x
+          go-version: ${{ env.GO_VERSION }}
       - name: Test code
         # we're passing -short so that we skip the integration tests, which will be run in parallel below
-        run: |
-          mkdir -p /tmp/code_coverage
-          go test ./... -short -cover -args "-test.gocoverdir=/tmp/code_coverage"
-      - name: Upload code coverage artifacts
-        uses: actions/upload-artifact@v6
-        with:
-          name: coverage-unit-${{ matrix.os }}-${{ github.run_id }}
-          path: /tmp/code_coverage
+        run: go test ./... -short
 
   integration-tests:
     strategy:
@@ -53,17 +46,25 @@ jobs:
           - 2.38.2 # first version that supports the rebase.updateRefs config
           - 2.44.0
           - latest # We rely on github to have the latest version installed on their VMs
+        race:
+          - false
+        # Additionally run the whole suite once under the race detector. Data
+        # races live in lazygit's own Go code rather than in git, so a single
+        # git version is enough; use the latest to skip the git-build steps.
+        include:
+          - git-version: latest
+            race: true
     runs-on: ubuntu-latest
-    name: "Integration Tests - git ${{matrix.git-version}}"
+    name: "Integration Tests - git ${{matrix.git-version}}${{ matrix.race && ' (race)' || '' }}"
     env:
       GOFLAGS: -mod=vendor
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Restore Git cache
         if: matrix.git-version != 'latest'
         id: cache-git-restore
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/git-${{matrix.git-version}}
           key: ${{runner.os}}-git-${{matrix.git-version}}
@@ -80,28 +81,26 @@ jobs:
         run: sudo make -C "$HOME/git-${{matrix.git-version}}" -j install
       - name: Save Git cache
         if: steps.cache-git-restore.outputs.cache-hit != 'true' && matrix.git-version != 'latest'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/git-${{matrix.git-version}}
           key: ${{runner.os}}-git-${{matrix.git-version}}
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: 1.25.x
+          go-version: ${{ env.GO_VERSION }}
       - name: Print git version
         run: git --version
       - name: Test code
         env:
-          # See https://go.dev/blog/integration-test-coverage
-          LAZYGIT_GOCOVERDIR: /tmp/code_coverage
-        run: |
-          mkdir -p /tmp/code_coverage
-          ./scripts/run_integration_tests.sh
-      - name: Upload code coverage artifacts
-        uses: actions/upload-artifact@v6
-        with:
-          name: coverage-integration-${{ matrix.git-version }}-${{ github.run_id }}
-          path: /tmp/code_coverage
+          # Only set for the race variant. The race detector needs cgo; it's on
+          # by default on the Linux runner, but we set it explicitly to be safe.
+          LAZYGIT_RACE_DETECTOR: ${{ matrix.race && '1' || '' }}
+          CGO_ENABLED: ${{ matrix.race && '1' || '' }}
+          # Append each test's duration to this file; run_integration_tests.sh
+          # prints the slowest at the end, to spot slow/anomalous tests.
+          LAZYGIT_TEST_TIMING: /tmp/test_timings.txt
+        run: ./scripts/run_integration_tests.sh
   build:
     runs-on: ubuntu-latest
     env:
@@ -109,11 +108,11 @@ jobs:
       GOARCH: amd64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: 1.25.x
+          go-version: ${{ env.GO_VERSION }}
       - name: Build linux binary
         run: |
           GOOS=linux go build
@@ -136,11 +135,11 @@ jobs:
       GOARCH: amd64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: 1.25.x
+          go-version: ${{ env.GO_VERSION }}
       - name: Check Vendor Directory
         # ensure our vendor directory matches up with our go modules
         run: |
@@ -162,54 +161,21 @@ jobs:
       GOFLAGS: -mod=vendor
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: 1.25.x
+          go-version: ${{ env.GO_VERSION }}
+      - name: Check formatting
+        run: ./scripts/gofumpt-check.sh
       - name: Lint
-        uses: golangci/golangci-lint-action@v9
+        # Run even if the formatting check failed, so that both sets of
+        # problems are reported in a single CI run.
+        if: ${{ !cancelled() }}
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
           # If you change this, make sure to also update scripts/golangci-lint-shim.sh
-          version: v2.4.0
-      - name: errors
-        run: golangci-lint run
-        if: ${{ failure() }}
-  upload-coverage:
-    # List all jobs that produce coverage files
-    needs: [unit-tests, integration-tests]
-    if: github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: 1.25.x
-
-      - name: Download all coverage artifacts
-        uses: actions/download-artifact@v7
-        with:
-          path: /tmp/code_coverage
-
-      - name: Combine coverage files
-        run: |
-          # Find all directories in /tmp/code_coverage and create a comma-separated list
-          COVERAGE_DIRS=$(find /tmp/code_coverage -mindepth 1 -maxdepth 1 -type d -printf '/tmp/code_coverage/%f,' | sed 's/,$//')
-          echo "Coverage directories: $COVERAGE_DIRS"
-          # Run the combine command with the generated list
-          go tool covdata textfmt -i=$COVERAGE_DIRS -o coverage.out
-          echo "Combined coverage:"
-          go tool cover -func coverage.out | tail -1 | awk '{print $3}'
-
-      - name: Upload to Codacy
-        run: |
-          CODACY_PROJECT_TOKEN=${{ secrets.CODACY_PROJECT_TOKEN }} \
-            bash <(curl -Ls https://coverage.codacy.com/get.sh) report \
-            --force-coverage-parser go -r coverage.out
-
+          version: v2.15.0
   check-for-fixups:
     runs-on: ubuntu-latest
     if: github.ref != 'refs/heads/master'
@@ -219,7 +185,7 @@ jobs:
         run: echo "PR_FETCH_DEPTH=$(( ${{ github.event.pull_request.commits }} ))" >> "${GITHUB_ENV}"
 
       - name: "Checkout PR branch and all PR commits"
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.ref }}
