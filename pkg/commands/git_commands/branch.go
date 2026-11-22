@@ -470,7 +470,7 @@ func (self *BranchCommands) previousUpstreamValues(upstreamRef string) []string 
 type upstreamHistory struct {
 	// The values that the branch had before its current one
 	previousValues []string
-	// Whether the current value contains all the ones. This is the case for a branch that was never rewritten.
+	// Whether the current value contains every previous value. True for a branch that was never rewritten.
 	containsPreviousValues bool
 }
 
