@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
@@ -11,37 +12,26 @@ func TestThreadSafeMap(t *testing.T) {
 	m.Set(2, 2)
 	m.Set(3, 3)
 
-	if m.Len() != 3 {
-		t.Errorf("Expected length to be 3, got %d", m.Len())
-	}
+	assert.Equal(t, 3, m.Len())
 
-	if !m.Has(1) {
-		t.Errorf("Expected to have key 1")
-	}
+	assert.True(t, m.Has(1))
 
-	if m.Has(4) {
-		t.Errorf("Expected to not have key 4")
-	}
+	assert.False(t, m.Has(4))
 
-	if _, ok := m.Get(1); !ok {
-		t.Errorf("Expected to have key 1")
-	}
+	_, ok := m.Get(1)
+	assert.True(t, ok)
 
-	if _, ok := m.Get(4); ok {
-		t.Errorf("Expected to not have key 4")
-	}
+	_, ok = m.Get(4)
+	assert.False(t, ok)
 
 	m.Delete(1)
 
-	if m.Has(1) {
-		t.Errorf("Expected to not have key 1")
-	}
+	assert.False(t, m.Has(1))
 
 	m.Clear()
 
-	if m.Len() != 0 {
-		t.Errorf("Expected length to be 0, got %d", m.Len())
-	}
+	assert.Equal(t, 0, m.Len())
+
 }
 
 func TestThreadSafeMapConcurrentReadWrite(t *testing.T) {

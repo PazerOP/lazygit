@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bytes"
+	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
@@ -13,7 +14,6 @@ func TestOnceWriter(t *testing.T) {
 	})
 	_, _ = onceWriter.Write([]byte("hello"))
 	_, _ = onceWriter.Write([]byte("hello"))
-	if counter != 1 {
-		t.Errorf("expected counter to be 1, got %d", counter)
-	}
+	assert.Equal(t, 1, counter)
+
 }

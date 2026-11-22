@@ -1,6 +1,9 @@
 package gocui
 
-import "testing"
+import (
+	"github.com/stretchr/testify/assert"
+	"testing"
+)
 
 func TestCalcScrollbar(t *testing.T) {
 	tests := []struct {
@@ -102,13 +105,10 @@ func TestCalcScrollbar(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.testName, func(t *testing.T) {
 			start, height := calcScrollbar(test.listSize, test.pageSize, test.position, test.scrollAreaSize)
-			if start != test.expectedStart {
-				t.Errorf("expected start to be %d, got %d", test.expectedStart, start)
-			}
+			assert.Equal(t, test.expectedStart, start)
 
-			if height != test.expectedHeight {
-				t.Errorf("expected height to be %d, got %d", test.expectedHeight, height)
-			}
+			assert.Equal(t, test.expectedHeight, height)
+
 		})
 	}
 }

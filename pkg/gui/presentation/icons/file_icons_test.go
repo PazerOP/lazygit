@@ -1,21 +1,20 @@
 package icons
 
 import (
+	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
 func TestFileIcons(t *testing.T) {
 	t.Run("TestFileIcons", func(t *testing.T) {
 		for name, icon := range nameIconMap {
-			if len([]rune(icon.Icon)) != 1 {
-				t.Errorf("nameIconMap[\"%s\"] is not a single rune", name)
-			}
+			assert.Equal(t, 1, len([]rune(icon.Icon)), "nameIconMap[\"%s\"] is not a single rune", name)
+
 		}
 
 		for ext, icon := range extIconMap {
-			if len([]rune(icon.Icon)) != 1 {
-				t.Errorf("extIconMap[\"%s\"] is not a single rune", ext)
-			}
+			assert.Equal(t, 1, len([]rune(icon.Icon)), "extIconMap[\"%s\"] is not a single rune", ext)
+
 		}
 	})
 }

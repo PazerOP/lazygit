@@ -76,20 +76,14 @@ func TestGoroutinesAreGuardedAgainstPanics(t *testing.T) {
 		ast.Inspect(file, func(node ast.Node) bool {
 			switch node := node.(type) {
 			case *ast.GoStmt:
-				if !isCallTo(node.Call, safe) {
-					t.Errorf("%s: go statement doesn't run %s", fset.Position(node.Pos()), safe)
-				}
+				assert.True(t, isCallTo(node.Call, safe))
+
 			case *ast.CallExpr:
-				if types.ExprString(node.Fun) == "time.AfterFunc" && len(node.Args) == 2 &&
-					!isCallTo(node.Args[1], safeFunc) {
-					t.Errorf("%s: function given to time.AfterFunc isn't wrapped with %s",
-						fset.Position(node.Pos()), safeFunc)
-				}
-				if selector, ok := node.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "Go" && len(node.Args) == 1 &&
-					!isCallTo(node.Args[0], safeFunc, safeFuncWithError) {
-					t.Errorf("%s: function given to %s isn't wrapped with %s or %s",
-						fset.Position(node.Pos()), types.ExprString(node.Fun), safeFunc, safeFuncWithError)
-				}
+				assert.False(t, types.ExprString(node.Fun) == "time.AfterFunc" && len(node.Args) == 2 && !isCallTo(node.Args[1], safeFunc))
+
+				selector, ok := node.Fun.(*ast.SelectorExpr)
+				assert.False(t, ok && selector.Sel.Name == "Go" && len(node.Args) == 1 && !isCallTo(node.Args[0], safeFunc, safeFuncWithError))
+
 			}
 			return true
 		})

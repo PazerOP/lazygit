@@ -95,9 +95,8 @@ func TestModuloWithWrap(t *testing.T) {
 	}
 
 	for _, s := range scenarios {
-		if s.expected != ModuloWithWrap(s.n, s.max) {
-			t.Errorf("expected %d, got %d, for n: %d, max: %d", s.expected, ModuloWithWrap(s.n, s.max), s.n, s.max)
-		}
+		assert.Equal(t, ModuloWithWrap(s.n, s.max), s.expected)
+
 	}
 }
 

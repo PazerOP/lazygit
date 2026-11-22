@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/jesseduffield/lazygit/pkg/gui/style"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestDecolorise(t *testing.T) {
@@ -199,8 +200,7 @@ func TestDecolorise(t *testing.T) {
 
 	for _, test := range tests {
 		output := Decolorise(test.input)
-		if output != test.output {
-			t.Errorf("Decolorise(%s) = %s, want %s", test.input, output, test.output)
-		}
+		assert.Equal(t, test.output, output)
+
 	}
 }

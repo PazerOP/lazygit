@@ -6,6 +6,7 @@ import (
 
 	"github.com/jesseduffield/lazygit/pkg/gocui"
 	"github.com/jesseduffield/lazygit/pkg/utils"
+	"github.com/stretchr/testify/assert"
 )
 
 func getRunner() *cmdObjRunner {
@@ -129,9 +130,8 @@ func TestProcessOutput(t *testing.T) {
 			cmdObj := &CmdObj{task: gocui.NewFakeTask()}
 			runner.processOutput(reader, writer, toChanFn(scenario.promptUserForCredential), func() error { return nil }, cmdObj)
 
-			if writer.String() != scenario.expectedToWrite {
-				t.Errorf("expected to write '%s' but got '%s'", scenario.expectedToWrite, writer.String())
-			}
+			assert.Equal(t, scenario.expectedToWrite, writer.String())
+
 		})
 	}
 }

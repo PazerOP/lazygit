@@ -1,11 +1,11 @@
 package theme
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/gookit/color"
 	"github.com/jesseduffield/lazygit/pkg/gui/style"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestGetTextStyle(t *testing.T) {
@@ -55,9 +55,9 @@ func TestGetTextStyle(t *testing.T) {
 
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			if actual := GetTextStyle(scenario.keys, scenario.background); !reflect.DeepEqual(actual, scenario.expected) {
-				t.Errorf("GetTextStyle() = %v, expected %v", actual, scenario.expected)
-			}
+			actual := GetTextStyle(scenario.keys, scenario.background)
+			assert.Equal(t, actual, scenario.expected)
+
 		})
 	}
 }

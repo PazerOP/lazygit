@@ -22,9 +22,8 @@ func TestGetInitials(t *testing.T) {
 		"":                   "",
 	} {
 		output := getInitials(input)
-		if output != expectedOutput {
-			t.Errorf("Expected %s to be %s", output, expectedOutput)
-		}
+		assert.Equal(t, expectedOutput, output)
+
 	}
 }
 

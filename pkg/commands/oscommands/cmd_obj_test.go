@@ -61,15 +61,12 @@ func TestClone(t *testing.T) {
 	task := gocui.NewFakeTask()
 	cmdObj := &CmdObj{task: task, cmd: &exec.Cmd{}}
 	clone := cmdObj.Clone()
-	if clone == cmdObj {
-		t.Errorf("Clone should not return the same object")
-	}
+	assert.NotEqual(t, cmdObj, clone)
 
 	if clone.GetTask() == nil {
 		t.Errorf("Clone task should not be nil")
 	}
 
-	if clone.GetTask() != task {
-		t.Errorf("Clone should have the same task")
-	}
+	assert.Equal(t, task, clone.GetTask())
+
 }

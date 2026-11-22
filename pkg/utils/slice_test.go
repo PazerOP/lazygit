@@ -167,9 +167,9 @@ func TestLimit(t *testing.T) {
 			want:   []string{},
 		},
 	} {
-		if got := Limit(test.values, test.limit); !assert.EqualValues(t, got, test.want) {
-			t.Errorf("Limit(%v, %d) = %v; want %v", test.values, test.limit, got, test.want)
-		}
+		got := Limit(test.values, test.limit)
+		assert.True(t, assert.EqualValues(t, got, test.want))
+
 	}
 }
 
@@ -225,9 +225,9 @@ func TestLimitStr(t *testing.T) {
 			want:   "あい",
 		},
 	} {
-		if got := LimitStr(test.values, test.limit); !assert.EqualValues(t, got, test.want) {
-			t.Errorf("LimitString(%v, %d) = %v; want %v", test.values, test.limit, got, test.want)
-		}
+		got := LimitStr(test.values, test.limit)
+		assert.True(t, assert.EqualValues(t, got, test.want))
+
 	}
 }
 

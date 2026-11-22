@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"io"
 	"os/exec"
-	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -78,20 +77,16 @@ func TestNewCmdTaskInstantStop(t *testing.T) {
 		{1, getOnDoneCallCount(), "onDone"},
 	}
 	for _, expectation := range callCountExpectations {
-		if expectation.actual != expectation.expected {
-			t.Errorf("expected %s to be called %d times, got %d", expectation.name, expectation.expected, expectation.actual)
-		}
+		assert.Equal(t, expectation.expected, expectation.actual)
+
 	}
 
-	if task.Status() != gocui.TaskStatusDone {
-		t.Errorf("expected task status to be 'done', got '%s'", task.FormatStatus())
-	}
+	assert.Equal(t, gocui.TaskStatusDone, task.Status())
 
 	expectedContent := ""
 	actualContent := writer.String()
-	if actualContent != expectedContent {
-		t.Errorf("expected writer to receive the following content: \n%s\n. But instead it received: %s", expectedContent, actualContent)
-	}
+	assert.Equal(t, expectedContent, actualContent)
+
 }
 
 func TestNewCmdTask(t *testing.T) {
@@ -155,20 +150,16 @@ func TestNewCmdTask(t *testing.T) {
 		{1, getOnDoneCallCount(), "onDone"},
 	}
 	for _, expectation := range callCountExpectations {
-		if expectation.actual != expectation.expected {
-			t.Errorf("expected %s to be called %d times, got %d", expectation.name, expectation.expected, expectation.actual)
-		}
+		assert.Equal(t, expectation.expected, expectation.actual)
+
 	}
 
-	if task.Status() != gocui.TaskStatusDone {
-		t.Errorf("expected task status to be 'done', got '%s'", task.FormatStatus())
-	}
+	assert.Equal(t, gocui.TaskStatusDone, task.Status())
 
 	expectedContent := "prefix\ntest\n"
 	actualContent := writer.String()
-	if actualContent != expectedContent {
-		t.Errorf("expected writer to receive the following content: \n%s\n. But instead it received: %s", expectedContent, actualContent)
-	}
+	assert.Equal(t, expectedContent, actualContent)
+
 }
 
 // A prefix is produced before the command starts, so a task stopped while it
@@ -835,10 +826,8 @@ func TestNewCmdTaskRefresh(t *testing.T) {
 
 		wg.Wait()
 
-		if !reflect.DeepEqual(lineCountsOnRefresh, s.expectedLineCountsOnRefresh) {
-			t.Errorf("%s: expected line counts on refresh: %v, got %v",
-				s.name, s.expectedLineCountsOnRefresh, lineCountsOnRefresh)
-		}
+		assert.Equal(t, lineCountsOnRefresh, s.expectedLineCountsOnRefresh)
+
 	}
 }
 

@@ -1,7 +1,6 @@
 package gocui
 
 import (
-	"reflect"
 	"strconv"
 	"testing"
 
@@ -1023,12 +1022,9 @@ func Test_AutoWrapContent(t *testing.T) {
 			textArea := &TextArea{content: tt.content, AutoWrapWidth: tt.autoWrapWidth, AutoWrap: true}
 			cells, softLineBreakIndices := contentToCells(tt.content, tt.autoWrapWidth)
 			textArea.cells = cells
-			if !reflect.DeepEqual(textArea.GetContent(), tt.expectedWrappedContent) {
-				t.Errorf("autoWrapContentImpl() wrappedContent = %v, expected %v", textArea.GetContent(), tt.expectedWrappedContent)
-			}
-			if !reflect.DeepEqual(softLineBreakIndices, tt.expectedSoftLineBreaks) {
-				t.Errorf("autoWrapContentImpl() softLineBreakIndices = %v, expected %v", softLineBreakIndices, tt.expectedSoftLineBreaks)
-			}
+			assert.Equal(t, textArea.GetContent(), tt.expectedWrappedContent)
+
+			assert.Equal(t, softLineBreakIndices, tt.expectedSoftLineBreaks)
 
 			// As a sanity check, run through all characters of the original content,
 			// convert the cursor to the wrapped cursor, and check that the character
@@ -1036,16 +1032,12 @@ func Test_AutoWrapContent(t *testing.T) {
 			origCursor := 0
 			for _, chr := range stringToGraphemes(tt.content) {
 				wrappedIndex := textArea.contentCursorToCellCursor(origCursor)
-				if chr != textArea.cells[wrappedIndex].char {
-					t.Errorf("Runes in orig content and wrapped content don't match at %d: expected %v, got %v", origCursor, chr, textArea.cells[wrappedIndex].char)
-				}
+				assert.Equal(t, textArea.cells[wrappedIndex].char, chr)
 
 				// Also, check that converting the wrapped position back to the
 				// orig position yields the original value again:
 				origIndexAgain := textArea.cellCursorToContentCursor(wrappedIndex)
-				if origCursor != origIndexAgain {
-					t.Errorf("wrappedCursorToOrigCursor doesn't yield original position: expected %d, got %d", origCursor, origIndexAgain)
-				}
+				assert.Equal(t, origIndexAgain, origCursor)
 
 				origCursor += len(chr)
 			}

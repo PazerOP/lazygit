@@ -1,7 +1,7 @@
 package utils
 
 import (
-	"reflect"
+	"github.com/stretchr/testify/assert"
 	"regexp"
 	"testing"
 )
@@ -37,8 +37,7 @@ func TestFindNamedMatches(t *testing.T) {
 
 	for _, scenario := range scenarios {
 		actual := FindNamedMatches(scenario.regex, scenario.input)
-		if !reflect.DeepEqual(actual, scenario.expected) {
-			t.Errorf("FindNamedMatches(%s, %s) == %s, expected %s", scenario.regex, scenario.input, actual, scenario.expected)
-		}
+		assert.Equal(t, actual, scenario.expected)
+
 	}
 }

@@ -92,9 +92,9 @@ func TestFormatSecondsAgo(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := formatSecondsAgo(tt.args); got != tt.want {
-				t.Errorf("formatSecondsAgo(%d) = %v, want %v", tt.args, got, tt.want)
-			}
+			got := formatSecondsAgo(tt.args)
+			assert.Equal(t, tt.want, got)
+
 		})
 	}
 }
