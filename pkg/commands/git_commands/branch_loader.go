@@ -71,12 +71,9 @@ func NewBranchLoader(
 }
 
 // Load the list of branches for the current repo
-func (self *BranchLoader) Load(reflogCommits []*models.Commit,
-	mainBranches *MainBranches,
+func (self *BranchLoader) Load(
+	reflogCommits []*models.Commit,
 	oldBranches []*models.Branch,
-	loadExtraInfo bool,
-	onWorker func(func() error),
-	renderFunc func(),
 ) ([]*models.Branch, error) {
 	branches, tips, err := self.obtainBranches()
 	if err != nil {
@@ -155,19 +152,27 @@ func (self *BranchLoader) Load(reflogCommits []*models.Commit,
 		}
 	}
 
-	if loadExtraInfo {
-		if self.UserConfig().Gui.ShowDivergenceFromBaseBranch != "none" {
-			onWorker(func() error {
-				return self.GetBehindBaseBranchValuesForAllBranches(branches, mainBranches, renderFunc)
-			})
-		}
+	return branches, nil
+}
 
+// Starts loading the values of the given branches that take too long to
+// determine to make the branch list wait for them. Each of them is loaded on a
+// worker, which calls renderFunc when it is done.
+func (self *BranchLoader) LoadExtraInfo(
+	branches []*models.Branch,
+	mainBranches *MainBranches,
+	onWorker func(func() error),
+	renderFunc func(),
+) {
+	if self.UserConfig().Gui.ShowDivergenceFromBaseBranch != "none" {
 		onWorker(func() error {
-			return self.checkForRewrittenUpstreams(branches, renderFunc)
+			return self.GetBehindBaseBranchValuesForAllBranches(branches, mainBranches, renderFunc)
 		})
 	}
 
-	return branches, nil
+	onWorker(func() error {
+		return self.checkForRewrittenUpstreams(branches, renderFunc)
+	})
 }
 
 // For each branch that has diverged from its upstream, determines whether the
