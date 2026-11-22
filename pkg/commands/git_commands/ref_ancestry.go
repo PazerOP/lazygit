@@ -2,10 +2,13 @@ package git_commands
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/jesseduffield/generics/set"
 	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
+	"github.com/jesseduffield/lazygit/pkg/utils"
 	"github.com/samber/lo"
+	"golang.org/x/sync/errgroup"
 )
 
 // The tip commit of a ref, as far as sorting refs by ancestry needs it. The
@@ -16,11 +19,7 @@ type refTip struct {
 	committerDate string
 }
 
-// Determining ancestry costs one %(ahead-behind:<tip>) field per tip, and git
-// evaluates each of those for every tip we ask about, so the work grows with
-// the square of the number of tips. Branches whose tips came out of one rebase
-// are nowhere near this many, so leave the refs in the order git returned them
-// once the tips add up to more than this.
+// Determining ancestry costs one git process per group of tips.
 const maxTipsForAncestrySorting = 100
 
 // Sorts each group of refs that share a committer date so that a ref comes
@@ -35,16 +34,10 @@ const maxTipsForAncestrySorting = 100
 // for each of them.
 func sortRefsWithEqualDatesByAncestry[T any](
 	cmd oscommands.ICmdObjBuilder,
-	version *GitVersion,
 	refs []T,
 	fullRefName func(T) string,
 	tips map[string]refTip,
 ) error {
-	// %(ahead-behind:...) was added in git 2.41
-	if !version.IsAtLeast(2, 41, 0) {
-		return nil
-	}
-
 	groups := lo.Filter(groupRefsWithEqualDates(refs, fullRefName, tips),
 		func(group []T, _ int) bool {
 			return pointAtMoreThanOneCommit(group, fullRefName, tips)
@@ -56,28 +49,34 @@ func sortRefsWithEqualDatesByAncestry[T any](
 	// Ancestry is a property of the tip commits, so ask git about each of them
 	// once, however many refs point at it. A repository with several remotes
 	// has the same branches under each of them, and they all share a date.
-	tipHashes := []string{}
-	refNames := []string{}
-	seenTips := set.New[string]()
-	for _, ref := range lo.Flatten(groups) {
-		refName := fullRefName(ref)
-		if hash := tips[refName].hash; !seenTips.Includes(hash) {
-			seenTips.Add(hash)
-			tipHashes = append(tipHashes, hash)
-			refNames = append(refNames, refName)
-		}
-	}
-	if len(tipHashes) > maxTipsForAncestrySorting {
+	tipHashesByGroup := lo.Map(groups, func(group []T, _ int) []string {
+		return lo.Uniq(lo.Map(group, func(ref T, _ int) string {
+			return tips[fullRefName(ref)].hash
+		}))
+	})
+	numTips := lo.SumBy(tipHashesByGroup, func(tipHashes []string) int {
+		return len(tipHashes)
+	})
+	if numTips > maxTipsForAncestrySorting {
 		return nil
 	}
 
-	containedTips, err := loadContainedTips(cmd, tipHashes, refNames)
-	if err != nil {
+	containedTipsByGroup := make([]map[string]*set.Set[string], len(groups))
+	errg := errgroup.Group{}
+	for i, group := range groups {
+		errg.Go(utils.SafeFuncWithError(func() error {
+			committerDate := tips[fullRefName(group[0])].committerDate
+			containedTips, err := loadContainedTips(cmd, tipHashesByGroup[i], committerDate)
+			containedTipsByGroup[i] = containedTips
+			return err
+		}))
+	}
+	if err := errg.Wait(); err != nil {
 		return err
 	}
 
-	for _, group := range groups {
-		sortGroupByAncestry(group, fullRefName, tips, containedTips)
+	for i, group := range groups {
+		sortGroupByAncestry(group, fullRefName, tips, containedTipsByGroup[i])
 	}
 
 	return nil
@@ -123,44 +122,58 @@ func groupRefsWithEqualDates[T any](
 	return groups
 }
 
-// For each of the given tips, which of the tips its history contains. Keyed by
-// tip hash, with an entry for every tip passed in. refNames names, for each
-// tip, a ref that points at it; git reports the values by ref name.
+// For each of the given tips, which of the other tips its history contains.
+// Keyed by tip hash, with an entry for every tip passed in. committerDate is
+// the committer date that the tips share.
+//
+// Only looks at commits that are not older than the tips, so that the cost
+// doesn't depend on the size of the history. This finds an ancestor that has
+// the same committer date as its descendant, unless a commit between both
+// has an older date than both. This takes a clock that was set back.
 func loadContainedTips(
 	cmd oscommands.ICmdObjBuilder,
 	tipHashes []string,
-	refNames []string,
+	committerDate string,
 ) (map[string]*set.Set[string], error) {
 	output, err := cmd.New(
-		buildAheadBehindForEachRefArgs(tipHashes, refNames),
+		NewGitCmd("rev-list").
+			Arg("--parents").
+			Arg("--max-age=" + committerDate).
+			Arg(tipHashes...).
+			ToArgv(),
 	).DontLog().RunWithOutput()
 	if err != nil {
 		return nil, err
 	}
 
-	containedTips := make(map[string]*set.Set[string], len(tipHashes))
-	for _, hash := range tipHashes {
-		containedTips[hash] = set.New[string]()
-	}
-	tipByRefName := make(map[string]string, len(refNames))
-	for i, refName := range refNames {
-		tipByRefName[refName] = tipHashes[i]
+	// The parents of each commit that is not older than the tips
+	parents := map[string][]string{}
+	for line := range strings.Lines(output) {
+		hashes := strings.Fields(line)
+		if len(hashes) > 0 {
+			parents[hashes[0]] = hashes[1:]
+		}
 	}
 
-	for _, entry := range parseAheadBehindForEachRefOutput(output, len(tipHashes)) {
-		hash, ok := tipByRefName[entry.refName]
-		if !ok {
-			continue
-		}
-		contained := containedTips[hash]
-		for i, ab := range entry.aheadBehinds {
-			// The tip's history contains the other tip if it has commits the
-			// other one doesn't have, and the other one has none it doesn't
-			// have.
-			if ab.valid && ab.ahead > 0 && ab.behind == 0 {
-				contained.Add(tipHashes[i])
+	isTip := set.NewFromSlice(tipHashes)
+	containedTips := make(map[string]*set.Set[string], len(tipHashes))
+	for _, tipHash := range tipHashes {
+		contained := set.New[string]()
+		visited := set.New[string]()
+		toVisit := slices.Clone(parents[tipHash])
+		for len(toVisit) > 0 {
+			hash := toVisit[len(toVisit)-1]
+			toVisit = toVisit[:len(toVisit)-1]
+			if visited.Includes(hash) {
+				continue
 			}
+			visited.Add(hash)
+			if isTip.Includes(hash) {
+				contained.Add(hash)
+			}
+			toVisit = append(toVisit, parents[hash]...)
 		}
+		containedTips[tipHash] = contained
 	}
 
 	return containedTips, nil

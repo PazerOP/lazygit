@@ -92,6 +92,14 @@ func TestGroupRefsWithEqualDates(t *testing.T) {
 }
 
 func TestSortRefsWithEqualDatesByAncestry(t *testing.T) {
+	// A git command that the sort runs, and what it prints: one line for each
+	// commit that is not older than the tips.
+	type expectedCmd struct {
+		args   []string
+		output string
+		err    error
+	}
+
 	// A stack of three branches, all committed within the same second, as git
 	// returns them: sorted by name. bottom is the base of middle, which is the
 	// base of top.
@@ -101,41 +109,22 @@ func TestSortRefsWithEqualDatesByAncestry(t *testing.T) {
 		{name: "bottom", hash: "b", date: "100"},
 	}
 
-	// One %(ahead-behind:<hash>) field per tip, in the order the tips appear in
-	// the branch list
-	stackOutput := "refs/heads/middle\x000 0\x000 1\x001 0\n" +
-		"refs/heads/top\x001 0\x000 0\x002 0\n" +
-		"refs/heads/bottom\x000 1\x000 2\x000 0\n"
-
-	stackArgs := []string{
-		"for-each-ref",
-		"--format=%(refname)%00%(ahead-behind:m)%00%(ahead-behind:t)%00%(ahead-behind:b)",
-		"refs/heads/middle", "refs/heads/top", "refs/heads/bottom",
-	}
+	stackArgs := []string{"rev-list", "--parents", "--max-age=100", "m", "t", "b"}
 
 	scenarios := []struct {
 		testName      string
 		refs          []testRef
-		gitVersion    *GitVersion
-		expectedArgs  []string
-		output        string
-		outputErr     error
+		expectedCmds  []expectedCmd
 		expectedOrder []string
 		expectedErr   string
 	}{
 		{
-			testName:      "a stack of branches is sorted from the top down",
-			refs:          stack,
-			gitVersion:    &GitVersion{2, 41, 0, ""},
-			expectedArgs:  stackArgs,
-			output:        stackOutput,
+			testName: "a stack of branches is sorted from the top down",
+			refs:     stack,
+			expectedCmds: []expectedCmd{
+				{args: stackArgs, output: "t m\nm b\nb old\n"},
+			},
 			expectedOrder: []string{"top", "middle", "bottom"},
-		},
-		{
-			testName:      "git too old for %(ahead-behind:...), so nothing to do",
-			refs:          stack,
-			gitVersion:    &GitVersion{2, 40, 0, ""},
-			expectedOrder: []string{"middle", "top", "bottom"},
 		},
 		{
 			testName: "no two refs share a date, so nothing to do",
@@ -144,17 +133,16 @@ func TestSortRefsWithEqualDatesByAncestry(t *testing.T) {
 				{name: "top", hash: "t", date: "200"},
 				{name: "bottom", hash: "b", date: "100"},
 			},
-			gitVersion:    &GitVersion{2, 41, 0, ""},
 			expectedOrder: []string{"middle", "top", "bottom"},
 		},
 		{
-			testName:      "the command fails",
-			refs:          stack,
-			gitVersion:    &GitVersion{2, 41, 0, ""},
-			expectedArgs:  stackArgs,
-			outputErr:     errors.New("fatal: failed to find 'm'"),
+			testName: "the command fails",
+			refs:     stack,
+			expectedCmds: []expectedCmd{
+				{args: stackArgs, err: errors.New("fatal: bad object m")},
+			},
 			expectedOrder: []string{"middle", "top", "bottom"},
-			expectedErr:   "fatal: failed to find 'm'",
+			expectedErr:   "fatal: bad object m",
 		},
 		{
 			testName: "a branch unrelated to the stack is placed by name",
@@ -164,16 +152,12 @@ func TestSortRefsWithEqualDatesByAncestry(t *testing.T) {
 				{name: "top", hash: "t", date: "100"},
 				{name: "bottom", hash: "b", date: "100"},
 			},
-			gitVersion: &GitVersion{2, 41, 0, ""},
-			expectedArgs: []string{
-				"for-each-ref",
-				"--format=%(refname)%00%(ahead-behind:m)%00%(ahead-behind:o)%00%(ahead-behind:t)%00%(ahead-behind:b)",
-				"refs/heads/middle", "refs/heads/other", "refs/heads/top", "refs/heads/bottom",
+			expectedCmds: []expectedCmd{
+				{
+					args:   []string{"rev-list", "--parents", "--max-age=100", "m", "o", "t", "b"},
+					output: "t m\nm b\no old\nb old\n",
+				},
 			},
-			output: "refs/heads/middle\x000 0\x002 1\x000 1\x001 0\n" +
-				"refs/heads/other\x001 2\x000 0\x001 3\x001 1\n" +
-				"refs/heads/top\x001 0\x003 1\x000 0\x002 0\n" +
-				"refs/heads/bottom\x000 1\x001 1\x000 2\x000 0\n",
 			expectedOrder: []string{"other", "top", "middle", "bottom"},
 		},
 		{
@@ -183,18 +167,58 @@ func TestSortRefsWithEqualDatesByAncestry(t *testing.T) {
 				{name: "cleanup", hash: "c", date: "100"},
 				{name: "fix-parser", hash: "p", date: "100"},
 			},
-			gitVersion: &GitVersion{2, 41, 0, ""},
-			expectedArgs: []string{
-				"for-each-ref",
-				"--format=%(refname)%00%(ahead-behind:t)%00%(ahead-behind:c)%00%(ahead-behind:p)",
-				"refs/heads/add-tests", "refs/heads/cleanup", "refs/heads/fix-parser",
+			expectedCmds: []expectedCmd{
+				{
+					args: []string{"rev-list", "--parents", "--max-age=100", "t", "c", "p"},
+					// add-tests is based on fix-parser, and cleanup is on a line of its own, but its name sorts between both
+					output: "t p\nc old\np old\n",
+				},
 			},
-			// add-tests is based on fix-parser, and cleanup is on a line of its
-			// own, but its name sorts between the two
-			output: "refs/heads/add-tests\x000 0\x002 1\x001 0\n" +
-				"refs/heads/cleanup\x001 2\x000 0\x001 1\n" +
-				"refs/heads/fix-parser\x000 1\x001 1\x000 0\n",
 			expectedOrder: []string{"add-tests", "fix-parser", "cleanup"},
+		},
+		{
+			testName: "a branch is descended from another one through commits that no branch points at",
+			refs: []testRef{
+				{name: "bottom", hash: "b", date: "100"},
+				{name: "top", hash: "t", date: "100"},
+			},
+			expectedCmds: []expectedCmd{
+				{
+					args:   []string{"rev-list", "--parents", "--max-age=100", "b", "t"},
+					output: "t 2\n2 1\n1 b\nb old\n",
+				},
+			},
+			expectedOrder: []string{"top", "bottom"},
+		},
+		{
+			testName: "a branch that merged two others comes before both",
+			refs: []testRef{
+				{name: "feature-a", hash: "a", date: "100"},
+				{name: "feature-b", hash: "b", date: "100"},
+				{name: "merged", hash: "m", date: "100"},
+			},
+			expectedCmds: []expectedCmd{
+				{
+					args:   []string{"rev-list", "--parents", "--max-age=100", "a", "b", "m"},
+					output: "m a b\na old\nb old\n",
+				},
+			},
+			expectedOrder: []string{"merged", "feature-a", "feature-b"},
+		},
+		{
+			testName: "an ancestor behind an older commit is not found",
+			refs: []testRef{
+				{name: "bottom", hash: "b", date: "100"},
+				{name: "top", hash: "t", date: "100"},
+			},
+			expectedCmds: []expectedCmd{
+				{
+					args: []string{"rev-list", "--parents", "--max-age=100", "b", "t"},
+					// The parent of top is older than the tips, so git does not walk from it to bottom
+					output: "t old\nb older\n",
+				},
+			},
+			expectedOrder: []string{"bottom", "top"},
 		},
 		{
 			testName: "each group is sorted on its own",
@@ -205,16 +229,16 @@ func TestSortRefsWithEqualDatesByAncestry(t *testing.T) {
 				{name: "base", hash: "a", date: "100"},
 				{name: "derived", hash: "d", date: "100"},
 			},
-			gitVersion: &GitVersion{2, 41, 0, ""},
-			expectedArgs: []string{
-				"for-each-ref",
-				"--format=%(refname)%00%(ahead-behind:m)%00%(ahead-behind:t)%00%(ahead-behind:a)%00%(ahead-behind:d)",
-				"refs/heads/middle", "refs/heads/top", "refs/heads/base", "refs/heads/derived",
+			expectedCmds: []expectedCmd{
+				{
+					args:   []string{"rev-list", "--parents", "--max-age=200", "m", "t"},
+					output: "t m\nm old\n",
+				},
+				{
+					args:   []string{"rev-list", "--parents", "--max-age=100", "a", "d"},
+					output: "d a\na old\n",
+				},
 			},
-			output: "refs/heads/middle\x000 0\x000 1\x002 0\x001 0\n" +
-				"refs/heads/top\x001 0\x000 0\x003 0\x002 0\n" +
-				"refs/heads/base\x000 2\x000 3\x000 0\x000 1\n" +
-				"refs/heads/derived\x000 1\x000 2\x001 0\x000 0\n",
 			expectedOrder: []string{"top", "middle", "lone", "derived", "base"},
 		},
 		{
@@ -223,7 +247,6 @@ func TestSortRefsWithEqualDatesByAncestry(t *testing.T) {
 				{name: "a", hash: "x", date: "100"},
 				{name: "b", hash: "x", date: "100"},
 			},
-			gitVersion:    &GitVersion{2, 41, 0, ""},
 			expectedOrder: []string{"a", "b"},
 		},
 		{
@@ -234,15 +257,12 @@ func TestSortRefsWithEqualDatesByAncestry(t *testing.T) {
 				{name: "stack-bottom", hash: "u", date: "100"},
 				{name: "stack-top", hash: "t", date: "100"},
 			},
-			gitVersion: &GitVersion{2, 41, 0, ""},
-			expectedArgs: []string{
-				"for-each-ref",
-				"--format=%(refname)%00%(ahead-behind:s)%00%(ahead-behind:u)%00%(ahead-behind:t)",
-				"refs/heads/mirror-1", "refs/heads/stack-bottom", "refs/heads/stack-top",
+			expectedCmds: []expectedCmd{
+				{
+					args:   []string{"rev-list", "--parents", "--max-age=100", "s", "u", "t"},
+					output: "t u\ns old\nu old\n",
+				},
 			},
-			output: "refs/heads/mirror-1\x000 0\x001 1\x001 2\n" +
-				"refs/heads/stack-bottom\x001 1\x000 0\x000 1\n" +
-				"refs/heads/stack-top\x002 1\x001 0\x000 0\n",
 			expectedOrder: []string{"mirror-1", "mirror-2", "stack-top", "stack-bottom"},
 		},
 	}
@@ -250,13 +270,13 @@ func TestSortRefsWithEqualDatesByAncestry(t *testing.T) {
 	for _, s := range scenarios {
 		t.Run(s.testName, func(t *testing.T) {
 			runner := oscommands.NewFakeRunner(t)
-			if s.expectedArgs != nil {
-				runner.ExpectGitArgs(s.expectedArgs, s.output, s.outputErr)
+			for _, cmd := range s.expectedCmds {
+				runner.ExpectGitArgs(cmd.args, cmd.output, cmd.err)
 			}
-			gitCommon := buildGitCommon(commonDeps{runner: runner, gitVersion: s.gitVersion})
+			gitCommon := buildGitCommon(commonDeps{runner: runner})
 
 			branches, tips := buildTestRefs(s.refs)
-			err := sortRefsWithEqualDatesByAncestry(gitCommon.cmd, gitCommon.version,
+			err := sortRefsWithEqualDatesByAncestry(gitCommon.cmd,
 				branches, (*models.Branch).FullRefName, tips)
 
 			if s.expectedErr == "" {
@@ -281,10 +301,10 @@ func TestSortRefsWithEqualDatesByAncestry_TooManyTips(t *testing.T) {
 
 	// The runner fails the test if the command runs at all
 	runner := oscommands.NewFakeRunner(t)
-	gitCommon := buildGitCommon(commonDeps{runner: runner, gitVersion: &GitVersion{2, 41, 0, ""}})
+	gitCommon := buildGitCommon(commonDeps{runner: runner})
 
 	branches, tips := buildTestRefs(refs)
-	err := sortRefsWithEqualDatesByAncestry(gitCommon.cmd, gitCommon.version,
+	err := sortRefsWithEqualDatesByAncestry(gitCommon.cmd,
 		branches, (*models.Branch).FullRefName, tips)
 
 	assert.NoError(t, err)
@@ -304,17 +324,13 @@ func TestSortRefsWithEqualDatesByAncestry_ManyRefsOnTwoTips(t *testing.T) {
 		}
 	})
 
-	runner := oscommands.NewFakeRunner(t).ExpectGitArgs([]string{
-		"for-each-ref",
-		"--format=%(refname)%00%(ahead-behind:bottom)%00%(ahead-behind:top)",
-		"refs/heads/branch-000", "refs/heads/branch-001",
-	},
-		"refs/heads/branch-000\x000 0\x000 1\n"+
-			"refs/heads/branch-001\x001 0\x000 0\n", nil)
-	gitCommon := buildGitCommon(commonDeps{runner: runner, gitVersion: &GitVersion{2, 41, 0, ""}})
+	runner := oscommands.NewFakeRunner(t).ExpectGitArgs(
+		[]string{"rev-list", "--parents", "--max-age=100", "bottom", "top"},
+		"top bottom\nbottom old\n", nil)
+	gitCommon := buildGitCommon(commonDeps{runner: runner})
 
 	branches, tips := buildTestRefs(refs)
-	err := sortRefsWithEqualDatesByAncestry(gitCommon.cmd, gitCommon.version,
+	err := sortRefsWithEqualDatesByAncestry(gitCommon.cmd,
 		branches, (*models.Branch).FullRefName, tips)
 
 	assert.NoError(t, err)

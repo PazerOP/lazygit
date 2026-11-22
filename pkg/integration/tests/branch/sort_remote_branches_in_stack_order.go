@@ -9,7 +9,6 @@ var SortRemoteBranchesInStackOrder = NewIntegrationTest(NewIntegrationTestArgs{
 	Description:  "Sort remote branches that share a committer date so that a branch comes before the ones it is based on",
 	ExtraCmdArgs: []string{},
 	Skip:         false,
-	GitVersion:   AtLeast("2.41.0"),
 	SetupConfig: func(config *config.AppConfig) {
 		config.GetUserConfig().Git.RemoteBranchSortOrder = "date"
 	},

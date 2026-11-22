@@ -84,7 +84,7 @@ func (self *BranchLoader) Load(reflogCommits []*models.Commit,
 	switch self.UserConfig().Git.LocalBranchSortOrder {
 	case "date":
 		if err := sortRefsWithEqualDatesByAncestry(
-			self.cmd, self.version, branches, (*models.Branch).FullRefName, tips,
+			self.cmd, branches, (*models.Branch).FullRefName, tips,
 		); err != nil {
 			self.Log.Errorf("Failed to sort branches by ancestry: %v", err)
 		}
