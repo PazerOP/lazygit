@@ -19,7 +19,7 @@ type refTip struct {
 	committerDate string
 }
 
-// Determining ancestry costs one git process per group of tips.
+// Each group of tips costs one git process.
 const maxTipsForAncestrySorting = 100
 
 // Sorts each group of refs that share a committer date so that a ref comes
