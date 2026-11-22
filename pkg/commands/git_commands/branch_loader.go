@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jesseduffield/generics/set"
@@ -93,10 +94,17 @@ func (self *BranchLoader) Load(
 		return nil, nil, err
 	}
 
-	refTips, err := self.loadTipsOfTrackedRefs(tips, trackedRefs)
-	if err != nil {
-		return nil, nil, err
-	}
+	// Sorting the branches can run git commands too, so run the other commands that follow the listing at the same time
+	var wg sync.WaitGroup
+	var refTips map[string]string
+	var refTipsErr error
+	var configBranches map[string]*BranchConfig
+	wg.Go(utils.SafeFunc(func() {
+		refTips, refTipsErr = self.loadTipsOfTrackedRefs(tips, trackedRefs)
+	}))
+	wg.Go(utils.SafeFunc(func() {
+		configBranches = self.config.Branches(self.cmd)
+	}))
 
 	switch self.UserConfig().Git.LocalBranchSortOrder {
 	case "date":
@@ -134,6 +142,11 @@ func (self *BranchLoader) Load(
 		branches = utils.Prepend(branches, branchesWithRecency...)
 	}
 
+	wg.Wait()
+	if refTipsErr != nil {
+		return nil, nil, refTipsErr
+	}
+
 	foundHead := false
 	for i, branch := range branches {
 		if branch.Head {
@@ -151,7 +164,6 @@ func (self *BranchLoader) Load(
 		branches = utils.Prepend(branches, &models.Branch{Name: info.RefName, DisplayName: info.DisplayName, Head: true, DetachedHead: info.DetachedHead, Subject: info.Subject, Recency: "  *"})
 	}
 
-	configBranches := self.config.Branches(self.cmd)
 	oldBranchesByName := lo.KeyBy(oldBranches, func(b *models.Branch) string {
 		return b.Name
 	})
