@@ -4,7 +4,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/jesseduffield/gocui"
+	"github.com/jesseduffield/lazygit/pkg/gocui"
 	"github.com/samber/lo"
 	"github.com/sasha-s/go-deadlock"
 )
@@ -37,6 +37,9 @@ type CmdObj struct {
 
 	// can be set so that we don't run certain commands simultaneously
 	mutex *deadlock.Mutex
+
+	// see RecoverFromLockErrorWith()
+	lockErrorRecovery func() *CmdObj
 }
 
 type CredentialStrategy int
@@ -91,8 +94,29 @@ func (self *CmdObj) AddEnvVars(vars ...string) *CmdObj {
 	return self
 }
 
+// RemoveEnvVar removes every occurrence of the named environment variable from
+// the command's environment. It's the counterpart to AddEnvVars, used to opt a
+// single command out of a variable that the builder sets on every command by
+// default.
+func (self *CmdObj) RemoveEnvVar(name string) *CmdObj {
+	prefix := name + "="
+	self.cmd.Env = lo.Filter(self.cmd.Env, func(envVar string, _ int) bool {
+		return !strings.HasPrefix(envVar, prefix)
+	})
+
+	return self
+}
+
 func (self *CmdObj) GetEnvVars() []string {
 	return self.cmd.Env
+}
+
+// SetEnviron replaces the command's whole environment, for a command that has
+// to run in the same one as another command rather than in this process's.
+func (self *CmdObj) SetEnviron(env []string) *CmdObj {
+	self.cmd.Env = env
+
+	return self
 }
 
 // sets the working directory
@@ -144,7 +168,7 @@ func (self *CmdObj) ShouldStreamOutput() bool {
 }
 
 // when you call this, then call Run(), we'll use a PTY to run the command. Only
-// has an effect if StreamOutput() was also called. Ignored on Windows.
+// has an effect if StreamOutput() was also called.
 func (self *CmdObj) UsePty() *CmdObj {
 	self.usePty = true
 
@@ -178,6 +202,27 @@ func (self *CmdObj) WithMutex(mutex *deadlock.Mutex) *CmdObj {
 	self.mutex = mutex
 
 	return self
+}
+
+// RecoverFromLockErrorWith sets what the git command runner does when this
+// command fails because another git process holds a lock (see
+// gitCmdObjRunner.retryOnLockError). Without it, the runner runs the command
+// again. That is wrong for a command that starts an operation of several
+// steps, such as a rebase, if the lock only stopped it partway through.
+//
+// The runner calls recovery after each failed attempt, including the last
+// one, so that recovery can also clean up after the command. It returns the
+// command to run next: this one to run it again, a different one (for
+// example, one that resumes the operation), or nil to give up and return the
+// error.
+func (self *CmdObj) RecoverFromLockErrorWith(recovery func() *CmdObj) *CmdObj {
+	self.lockErrorRecovery = recovery
+
+	return self
+}
+
+func (self *CmdObj) GetLockErrorRecovery() func() *CmdObj {
+	return self.lockErrorRecovery
 }
 
 // runs the command and returns an error if any

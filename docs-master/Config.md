@@ -37,12 +37,6 @@ This is only meant as a reference for what config options exist, and what their 
 ```yaml
 # Config relating to the Lazygit UI
 gui:
-  # See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-author-color
-  authorColors: {}
-
-  # See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-branch-color
-  branchColorPatterns: {}
-
   # Custom icons for filenames and file extensions
   # See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-files-icon--color
   customIcons:
@@ -66,8 +60,8 @@ gui:
 
   # The number of spaces per tab; used for everything that's shown in the main
   # view, but probably mostly relevant for diffs.
-  # Note that when using a pager, the pager has its own tab width setting, so you
-  # need to pass it separately in the pager command.
+  # Note that when using a diff renderer, the renderer has its own tab width
+  # setting, so you need to pass it separately in the renderer command.
   tabWidth: 4
 
   # If true, capture mouse events.
@@ -78,7 +72,7 @@ gui:
   # If true, do not show a warning when amending a commit.
   skipAmendWarning: false
 
-  # If true, do not show a warning when discarding changes in the staging view.
+  # If true, do not show a warning when discarding changes from a focused diff.
   skipDiscardChangeWarning: false
 
   # If true, do not show warning when applying/popping the stash
@@ -110,6 +104,26 @@ gui:
   # is true.
   expandedSidePanelWeight: 2
 
+  # If true, don't give a side panel more height than it needs to show its
+  # content; when all panels fit, the leftover height is shared among them so that
+  # they still fill the screen.
+  shrinkSidePanelsToContent: false
+
+  # The side panels, in the order they appear from top to bottom.
+  # Each entry is a list of one or more names that share a single panel as tabs
+  # (cycle through them with the next-tab/previous-tab keys).
+  # Omit a name to hide it; give a name its own one-element list to promote a tab
+  # to a top-level panel.
+  # Valid names are: 'status', 'files', 'worktrees', 'submodules', 'branches',
+  # 'remotes', 'tags', 'commits', 'reflog', 'stash'. 'files', 'branches', and
+  # 'commits' must always be included; they can't be hidden.
+  sidePanels:
+    - [status]
+    - [files, worktrees, submodules]
+    - [branches, remotes, tags]
+    - [commits, reflog]
+    - [stash]
+
   # Sometimes the main window is split in two (e.g. when the selected file has
   # both staged and unstaged changes). This setting controls how the two sections
   # are split.
@@ -128,14 +142,15 @@ gui:
   # - 'top': split the window vertically (side panel on top, main view below)
   enlargedSideViewLocation: left
 
-  # If true, wrap lines in the staging view to the width of the view. This makes
-  # it much easier to work with diffs that have long lines, e.g. paragraphs of
+  # If true, wrap lines in focused diffs to the width of the view. This makes it
+  # much easier to work with diffs that have long lines, e.g. paragraphs of
   # markdown text.
-  wrapLinesInStagingView: true
+  # If false, scroll a focused diff sideways with the scrollLeft and scrollRight
+  # keys (H and L by default).
+  wrapLinesInDiffView: true
 
-  # If true, hunk selection mode will be enabled by default when entering the
-  # staging view.
-  useHunkModeInStagingView: true
+  # If true, hunk selection mode will be enabled by default when focusing a diff.
+  useHunkModeInDiffView: true
 
   # One of 'auto' (default) | 'en' | 'zh-CN' | 'zh-TW' | 'pl' | 'nl' | 'ja' | 'ko'
   # | 'ru' | 'pt'
@@ -148,6 +163,14 @@ gui:
   # Format used when displaying time if the time is less than 24 hours ago.
   # Uses Go's time format syntax: https://pkg.go.dev/time#Time.Format
   shortTimeFormat: 3:04PM
+
+  # Whether the terminal has a dark or a light background. This decides whether
+  # 'darkTheme' or 'lightTheme' applies, and the colors of authors are picked to
+  # stand out against it.
+  # One of: 'auto' (default) | 'dark' | 'light'
+  # With 'auto', lazygit asks the terminal, and assumes a dark background if the
+  # terminal doesn't tell.
+  colorScheme: auto
 
   # Config relating to colors and styles.
   # See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#color-attributes
@@ -170,14 +193,22 @@ gui:
     optionsTextColor:
       - blue
 
+    # Color and attributes of the text of the selected line. The attributes are
+    # added to those of the text, and a color replaces the colors of the text.
+    # Set it to 'default' to leave the text as it is, e.g. if you don't want the
+    # selected line in bold.
+    selectedLineFgColor:
+      - bold
+
     # Background color of selected line.
+    # Default: 'blue' if the terminal has a dark background, or a suitable RGB blue
+    # computed from the background color if it is light.
     # See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#highlighting-the-selected-line
-    selectedLineBgColor:
-      - blue
+    selectedLineBgColor: []
 
     # Background color of selected line when view doesn't have focus.
-    inactiveViewSelectedLineBgColor:
-      - bold
+    # Default: a suitable RGB grey computed from the terminal's background color.
+    inactiveViewSelectedLineBgColor: []
 
     # Foreground color of copied commit
     cherryPickedCommitFgColor:
@@ -203,6 +234,22 @@ gui:
     defaultFgColor:
       - default
 
+    # See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-author-color
+    authorColors: {}
+
+    # See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#custom-branch-color
+    branchColorPatterns: {}
+
+  # Colors and styles that override those in 'theme' when the terminal has a dark
+  # background. It has the same fields as 'theme'.
+  # See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#themes-for-dark-and-light-backgrounds
+  darkTheme: {}
+
+  # Colors and styles that override those in 'theme' when the terminal has a light
+  # background. It has the same fields as 'theme'.
+  # See https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md#themes-for-dark-and-light-backgrounds
+  lightTheme: {}
+
   # Config relating to the commit length indicator
   commitLength:
     # If true, show an indicator of commit message length
@@ -221,6 +268,13 @@ gui:
   # repository. It is only added when necessary, i.e. when there is more than one
   # item at top level.
   showRootItemInFileTree: true
+
+  # How to sort files and directories in the file tree.
+  # One of: 'mixed' (default) | 'filesFirst' | 'foldersFirst'
+  fileTreeSortOrder: mixed
+
+  # If true (default), sort the file tree case-sensitively.
+  fileTreeSortCaseSensitive: true
 
   # If true, show the number of lines changed per file in the Files view
   showNumstatInFilesView: false
@@ -247,6 +301,18 @@ gui:
   # If true (default), file icons are shown in the file views. Only relevant if
   # NerdFontsVersion is not empty.
   showFileIcons: true
+
+  # How the commit graph is drawn.
+  # One of: 'auto' (default) | 'classic' | 'detailed'
+  # 'detailed' connects the lines to the commit circles, and shows exactly where
+  # branches fork off and merge. It draws the graph with the git branch drawing
+  # symbols (U+F5D0 to U+F60D), so it needs a terminal that draws these itself:
+  # kitty, Ghostty, WezTerm (nightly builds), Contour, or VS Code's terminal with
+  # GPU acceleration. Other terminals need a font that contains them, such as
+  # https://github.com/rbong/flog-symbols.
+  # 'auto' uses 'detailed' if lazygit recognizes the terminal as one that draws
+  # these symbols (kitty and Ghostty), and 'classic' otherwise.
+  commitGraphStyle: auto
 
   # Length of author name in (non-expanded) commits view. 2 means show initials
   # only.
@@ -291,6 +357,16 @@ gui:
   # One of 'auto' (default) | 'always' | 'never'
   portraitMode: auto
 
+  # In 'auto' mode, portrait mode will be used if the window width is less than or
+  # equal to portraitModeAutoMaxWidth and the window height is greater than or
+  # equal to portraitModeAutoMinHeight. Unused when portraitMode is not 'auto'.
+  portraitModeAutoMaxWidth: 84
+
+  # In 'auto' mode, portrait mode will be used if the window width is less than or
+  # equal to portraitModeAutoMaxWidth and the window height is greater than or
+  # equal to portraitModeAutoMinHeight. Unused when portraitMode is not 'auto'.
+  portraitModeAutoMinHeight: 46
+
   # How things are filtered when typing '/'.
   # One of 'substring' (default) | 'fuzzy'
   filterMode: substring
@@ -299,13 +375,13 @@ gui:
   spinner:
     # The frames of the spinner animation.
     frames:
-      - '|'
-      - /
-      - '-'
-      - \
+      - ●∙∙
+      - ∙●∙
+      - ∙∙●
+      - ∙●∙
 
     # The "speed" of the spinner in milliseconds.
-    rate: 50
+    rate: 180
 
   # Status panel view.
   # One of 'dashboard' (default) | 'allBranchesLog'
@@ -323,30 +399,39 @@ gui:
 
 # Config relating to git
 git:
-  # Array of pagers. Each entry has the following format:
+  # Array of diff renderers. Each entry has the following format:
   #
-  #   # Value of the --color arg in the git diff command. Some pagers want
-  #   # this to be set to 'always' and some want it set to 'never'
+  #   # The type of diff renderer. One of: 'stdinFilter' (default) | 'extDiff'
+  #   # | 'rawGit'
+  #   type: "stdinFilter"
+  #
+  #   # A name for the diff renderer, shown in the notification when cycling
+  #   # renderers. If not set, the name is derived from the first word of the
+  #   # renderer command.
+  #   name: ""
+  #
+  #   # Value of the --color arg in the git diff command. Only used for type
+  #   # 'stdinFilter'. Some renderers want this to be set to 'always' and some
+  #   # want it set to 'never'.
   #   colorArg: "always"
   #
+  #   # The command to use for rendering diffs. This is either a stdinFilter or
+  #   # an external diff command, depending on the type field; not applicable if
+  #   # the type is 'rawGit'.
   #   # e.g.
   #   # diff-so-fancy
   #   # delta --dark --paging=never
-  #   # ydiff -p cat -s --wrap --width={{columnWidth}}
-  #   pager: ""
+  #   # ydiff -p cat
+  #   # difft --color=always
+  #   command: ""
   #
-  #   # e.g. 'difft --color=always'
-  #   externalDiffCommand: ""
+  #   # Extra arguments (array of strings) passed to the git command. Only
+  #   # applicable if the type is 'rawGit'.
+  #   args: []
   #
-  #   # If true, Lazygit will use git's `diff.external` config for paging.
-  #   # The advantage over `externalDiffCommand` is that this can be
-  #   # configured per file type in .gitattributes; see
-  #   # https://git-scm.com/docs/gitattributes#_defining_an_external_diff_driver.
-  #   useExternalDiffGitConfig: false
-  #
-  # See https://github.com/jesseduffield/lazygit/blob/master/docs/Custom_Pagers.md
+  # See https://github.com/jesseduffield/lazygit/blob/master/docs/Custom_DiffRenderers.md
   # for more information.
-  pagers: []
+  diffRenderers: []
 
   # Config relating to committing
   commit:
@@ -371,6 +456,8 @@ git:
 
     # The commit message to use for a squash merge commit. Can contain
     # "{{selectedRef}}" and "{{currentBranch}}" placeholders.
+    # If HEAD is detached, "{{currentBranch}}" is the branch being rebased, or
+    # "HEAD" if no rebase is in progress.
     squashMergeMessage: Squash merge {{selectedRef}} into {{currentBranch}}
 
   # list of branches that are considered 'main' branches, used when displaying
@@ -389,10 +476,17 @@ git:
   # If true, periodically refresh files and submodules
   autoRefresh: true
 
+  # If true, poll the repo periodically for external ref changes (commits, branch
+  # updates, checkouts made outside lazygit) and refresh when one is detected.
+  # Independent of autoRefresh, which only governs the files panel.
+  autoDetectExternalChanges: true
+
   # If not "none", lazygit will automatically fast-forward local branches to match
   # their upstream after fetching. Applies to branches that are not the currently
   # checked out branch, and only to those that are strictly behind their upstream
-  # (as opposed to diverged).
+  # (as opposed to diverged). A branch that is checked out in another worktree is
+  # fast-forwarded there, unless that worktree has changes to tracked files or is
+  # in the middle of a rebase or bisect.
   # Possible values: 'none' | 'onlyMainBranches' | 'allBranches'
   autoForwardBranches: onlyMainBranches
 
@@ -414,7 +508,8 @@ git:
     - git log --graph --all --color=always --abbrev-commit --decorate --date=relative  --pretty=medium
 
   # If true, git diffs are rendered with the `--ignore-all-space` flag, which
-  # ignores whitespace changes. Can be toggled from within Lazygit with `<c-w>`.
+  # ignores whitespace changes. Can be toggled from within Lazygit with
+  # `<ctrl+w>`.
   ignoreWhitespaceInDiffView: false
 
   # The number of lines of context to show around each diff hunk. Can be changed
@@ -451,14 +546,14 @@ git:
     # appear chronologically. See https://git-scm.com/docs/
     #
     # Can be changed from within Lazygit with `Log menu -> Commit sort order`
-    # (`<c-l>` in the commits window by default).
+    # (`<ctrl+l>` in the commits window by default).
     order: topo-order
 
     # This determines whether the git graph is rendered in the commits panel
     # One of 'always' | 'never' | 'when-maximised'
     #
-    # Can be toggled from within lazygit with `Log menu -> Show git graph` (`<c-l>`
-    # in the commits window by default).
+    # Can be toggled from within lazygit with `Log menu -> Show git graph`
+    # (`<ctrl+l>` in the commits window by default).
     showGraph: always
 
     # displays the whole git graph by default in the commits view (equivalent to
@@ -481,6 +576,15 @@ git:
   # to 40 to disable truncation.
   truncateCopiedCommitHashesTo: 12
 
+# Config relating to git worktrees
+worktree:
+  # Default parent directory for new worktrees. It is offered as a candidate
+  # location alongside the parent directories of any worktrees you already have.
+  # A relative path is resolved against the repository's root directory, so
+  # "../worktrees" sits beside the repo and ".worktrees" sits inside it.
+  # A leading "~" is expanded to your home directory, so "~/worktrees" works.
+  defaultPath: ""
+
 # Periodic update checks
 update:
   # One of: 'prompt' (default) | 'background' | 'never'
@@ -498,6 +602,11 @@ refresher:
   # Re-fetch interval in seconds.
   # Auto-fetch can be disabled via option 'git.autoFetch'.
   fetchInterval: 60
+
+  # Interval in seconds at which lazygit polls for external ref changes (commits,
+  # branch updates, checkouts made outside lazygit).
+  # Detection can be disabled via option 'git.autoDetectExternalChanges'.
+  externalChangeCheckInterval: 2
 
 # If true, show a confirmation popup before quitting Lazygit
 confirmOnQuit: false
@@ -573,36 +682,30 @@ notARepository: prompt
 # view the output of the subprocess before returning to Lazygit.
 promptToReturnFromSubprocess: true
 
-# Keybindings
+# Keybindings.
+# Each binding can be a single key or a list of keys; see
+# https://github.com/jesseduffield/lazygit/blob/master/docs/keybindings/Custom_Keybindings.md
+# for the syntax.
 keybinding:
   universal:
-    quit: q
-    quit-alt1: <c-c>
-    suspendApp: <c-z>
+    quit: [q, <ctrl+c>]
+    suspendApp: <ctrl+z>
     return: <esc>
     quitWithoutChangingDirectory: Q
     togglePanel: <tab>
-    prevItem: <up>
-    nextItem: <down>
-    prevItem-alt: k
-    nextItem-alt: j
+    prevItem: [<up>, k]
+    nextItem: [<down>, j]
     prevPage: ','
     nextPage: .
     scrollLeft: H
     scrollRight: L
-    gotoTop: <
-    gotoBottom: '>'
-    gotoTop-alt: <home>
-    gotoBottom-alt: <end>
+    gotoTop: [<, <home>]
+    gotoBottom: ['>', <end>]
     toggleRangeSelect: v
-    rangeSelectDown: <s-down>
-    rangeSelectUp: <s-up>
-    prevBlock: <left>
-    nextBlock: <right>
-    prevBlock-alt: h
-    nextBlock-alt: l
-    nextBlock-alt2: <tab>
-    prevBlock-alt2: <backtab>
+    rangeSelectDown: <shift+down>
+    rangeSelectUp: <shift+up>
+    prevBlock: [<left>, h, <backtab>]
+    nextBlock: [<right>, l, <tab>]
     jumpToBlock:
       - "1"
       - "2"
@@ -610,28 +713,38 @@ keybinding:
       - "4"
       - "5"
     focusMainView: "0"
+    jumpToFile: <ctrl+g>
     nextMatch: "n"
     prevMatch: "N"
     startSearch: /
-    optionMenu: <disabled>
-    optionMenu-alt1: '?'
+
+    # <alt+left> on Mac
+    moveWordLeft: <ctrl+left>
+
+    # <alt+right> on Mac
+    moveWordRight: <ctrl+right>
+
+    # <alt+backspace> on Mac
+    backspaceWord: <ctrl+backspace>
+
+    # <alt+delete> on Mac
+    forwardDeleteWord: <ctrl+delete>
+    optionMenu: '?'
     select: <space>
     goInto: <enter>
     confirm: <enter>
     confirmMenu: <enter>
     confirmSuggestion: <enter>
-    confirmInEditor: <a-enter>
-    confirmInEditor-alt: <c-s>
+
+    # <meta+enter> on Mac
+    confirmInEditor: [<ctrl+enter>, <ctrl+s>]
     remove: d
     new: "n"
+    newWorktree: w
     edit: e
     openFile: o
-    scrollUpMain: <pgup>
-    scrollDownMain: <pgdown>
-    scrollUpMain-alt1: K
-    scrollDownMain-alt1: J
-    scrollUpMain-alt2: <c-u>
-    scrollDownMain-alt2: <c-d>
+    scrollUpMain: [<pgup>, K, <ctrl+u>]
+    scrollDownMain: [<pgdown>, J, <ctrl+d>]
     executeShellCommand: ':'
     createRebaseOptionsMenu: m
 
@@ -641,27 +754,28 @@ keybinding:
     # 'Files' appended for legacy reasons
     pullFiles: p
     refresh: R
-    createPatchOptionsMenu: <c-p>
+    createPatchOptionsMenu: <ctrl+p>
     nextTab: ']'
     prevTab: '['
     nextScreenMode: +
     prevScreenMode: _
-    cyclePagers: '|'
+    cycleDiffRenderers: '|'
+    cycleDiffRenderersReverse: \
     undo: z
     redo: Z
-    filteringMenu: <c-s>
-    diffingMenu: W
-    diffingMenu-alt: <c-e>
-    copyToClipboard: <c-o>
-    openRecentRepos: <c-r>
+    filteringMenu: <ctrl+s>
+    diffingMenu: [W, <ctrl+e>]
+    copyToClipboard: <ctrl+o>
+    openRecentRepos: <ctrl+r>
     submitEditorText: <enter>
     extrasMenu: '@'
-    toggleWhitespaceInDiffView: <c-w>
+    toggleWhitespaceInDiffView: <ctrl+w>
     increaseContextInDiffView: '}'
     decreaseContextInDiffView: '{'
     increaseRenameSimilarityThreshold: )
     decreaseRenameSimilarityThreshold: (
-    openDiffTool: <c-t>
+    openDiffTool: <ctrl+t>
+    editConfig: <alt+shift+c>
   status:
     checkForUpdate: u
     recentRepos: <enter>
@@ -672,7 +786,7 @@ keybinding:
     commitChangesWithoutHook: w
     amendLastCommit: A
     commitChangesWithEditor: C
-    findBaseCommitForFixup: <c-f>
+    findBaseCommitForFixup: <ctrl+f>
     confirmDiscard: x
     ignoreFile: i
     refreshFiles: r
@@ -683,14 +797,15 @@ keybinding:
     fetch: f
     toggleTreeView: '`'
     openMergeOptions: M
-    openStatusFilter: <c-b>
+    openStatusFilter: <ctrl+b>
     copyFileInfoToClipboard: "y"
     collapseAll: '-'
     expandAll: =
   branches:
     createPullRequest: o
     viewPullRequestOptions: O
-    copyPullRequestURL: <c-y>
+    openPullRequestInBrowser: G
+    copyPullRequestURL: <ctrl+y>
     checkoutBranchByName: c
     forceCheckoutBranch: F
     checkoutPreviousBranch: '-'
@@ -706,8 +821,6 @@ keybinding:
     fetchRemote: f
     addForkRemote: F
     sortOrder: s
-  worktrees:
-    viewWorktreeOptions: w
   commits:
     squashDown: s
     renameCommit: r
@@ -717,8 +830,8 @@ keybinding:
     setFixupMessage: c
     createFixupCommit: F
     squashAboveCommits: S
-    moveDownCommit: <c-j>
-    moveUpCommit: <c-k>
+    moveDownCommit: [<ctrl+j>, <alt-down>]
+    moveUpCommit: [<ctrl+k>, <alt-up>]
     amendToCommit: A
     resetCommitAuthor: a
     pickCommit: p
@@ -728,10 +841,11 @@ keybinding:
     markCommitAsBaseForRebase: B
     tagCommit: T
     checkoutCommit: <space>
-    resetCherryPick: <c-R>
+    resetCherryPick: <ctrl+r>
     copyCommitAttributeToClipboard: "y"
-    openLogMenu: <c-l>
+    openLogMenu: <ctrl+l>
     openInBrowser: o
+    openPullRequestInBrowser: G
     viewBisectOptions: b
     startInteractiveRebase: i
     selectCommitsOfCurrentBranch: '*'
@@ -745,6 +859,10 @@ keybinding:
   commitFiles:
     checkoutCommitFile: c
   main:
+    prevHunk: [<left>, h]
+    nextHunk: [<right>, l]
+    prevFile: "N"
+    nextFile: "n"
     toggleSelectHunk: a
     pickBothHunks: b
     editSelectHunk: E
@@ -753,7 +871,7 @@ keybinding:
     update: u
     bulkMenu: b
   commitMessage:
-    commitMenu: <c-o>
+    commitMenu: <ctrl+o>
 ```
 <!-- END CONFIG YAML -->
 
@@ -835,7 +953,9 @@ It is used, for example, when pasting a commit message into the commit message p
 
 ## Configuring File Editing
 
-There are two commands for opening files, `o` for "open" and `e` for "edit". `o` acts as if the file was double-clicked in the Finder/Explorer, so it also works for non-text files, whereas `e` opens the file in an editor. `e` can also jump to the right line in the file if you invoke it from the staging panel, for example.
+There are two commands for opening files, `o` for "open" and `e` for "edit". `o` acts as if the file was double-clicked in the Finder/Explorer, so it also works for non-text files, whereas `e` opens the file in an editor. `e` can also jump to the right line in the file when you invoke it from a focused diff.
+
+You can also open a line in your editor with the mouse: alt-click or shift-click it. Both modifiers do the same thing, because some terminals only support one or the other. The click leaves the focus and the selection where they are, so it works while you are reading a diff from another panel, or while a popup is open.
 
 To tell lazygit which editor to use for the `e` command, the easiest way to do that is to provide an editPreset config, e.g.
 
@@ -898,7 +1018,7 @@ When the selected line gets close to the bottom of the window and you hit down-a
 
 That's the behavior when `gui.scrollOffBehavior` is set to "margin" (the default). If you set `gui.scrollOffBehavior` to "jump", then upon reaching the last line of a view and hitting down-arrow the view will scroll by half a page so that the selection ends up in the middle of the view. This may feel a little jarring because the cursor jumps around when continuously moving down, but it has the advantage that the view doesn't scroll as often.
 
-This setting applies both to all list views (e.g. commits and branches etc), and to the staging view.
+This setting applies both to all list views (e.g. commits and branches etc), and to focused diffs.
 
 ## Filtering
 
@@ -927,6 +1047,7 @@ The available attributes are:
 
 - bold
 - default
+- dim # faint text; not supported by every terminal
 - reverse # useful for high-contrast
 - underline
 - strikethrough
@@ -951,28 +1072,61 @@ gui:
       - reverse
 ```
 
+The text of the selected line is bold by default. If you don't want that, set `selectedLineFgColor` to `default`:
+
+```yaml
+gui:
+  theme:
+    selectedLineFgColor:
+      - default
+```
+
+## Themes for dark and light backgrounds
+
+The colors in `gui.theme` apply whether your terminal has a dark or a light background. If you want different colors for the two, set them in `gui.darkTheme` or `gui.lightTheme`. These have the same fields as `gui.theme`, and a field that you set in them overrides the one in `gui.theme`:
+
+```yaml
+gui:
+  theme:
+    activeBorderColor:
+      - green
+      - bold
+  lightTheme:
+    activeBorderColor:
+      - blue
+      - bold
+```
+
+For `authorColors` and `branchColorPatterns`, each entry overrides the one with the same key in `gui.theme`, and the other entries of `gui.theme` still apply. Branch color patterns of `gui.darkTheme` or `gui.lightTheme` come before those of `gui.theme`.
+
+Lazygit asks the terminal whether its background is dark or light. If your terminal doesn't tell, lazygit assumes a dark background; set `gui.colorScheme` to `light` if yours is light.
+
 ## Custom Author Color
 
 Lazygit will assign a random color for every commit author in the commits pane by default.
+
+These colors are picked to be readable against the background of your terminal, and lazygit asks the terminal whether its background is dark or light. If your terminal doesn't tell, lazygit assumes a dark background; set `gui.colorScheme` to `light` if yours is light.
 
 You can customize the color in case you're not happy with the randomly assigned one:
 
 ```yaml
 gui:
-  authorColors:
-    'John Smith': 'red' # use red for John Smith
-    'Alan Smithee': '#00ff00' # use green for Alan Smithee
+  theme:
+    authorColors:
+      'John Smith': 'red' # use red for John Smith
+      'Alan Smithee': '#00ff00' # use green for Alan Smithee
 ```
 
 You can use wildcard to set a unified color in case your are lazy to customize the color for every author or you just want a single color for all/other authors:
 
 ```yaml
 gui:
-  authorColors:
-    # use red for John Smith
-    'John Smith': 'red'
-    # use blue for other authors
-    '*': '#0000ff'
+  theme:
+    authorColors:
+      # use red for John Smith
+      'John Smith': 'red'
+      # use blue for other authors
+      '*': '#0000ff'
 ```
 
 ## Custom Branch Color
@@ -981,12 +1135,15 @@ You can customize the color of branches based on branch patterns (regular expres
 
 ```yaml
 gui:
-  branchColorPatterns:
-    '^docs/': '#11aaff' # use a light blue for branches beginning with 'docs/'
-    'ISSUE-\d+': '#ff5733' # use a bright orange for branches containing 'ISSUE-<some-number>'
+  theme:
+    branchColorPatterns:
+      '^docs/': '#11aaff' # use a light blue for branches beginning with 'docs/'
+      'ISSUE-\d+': '#ff5733' # use a bright orange for branches containing 'ISSUE-<some-number>'
 ```
 
 Note that the regular expressions are not implicitly anchored to the beginning/end of the branch name. If you want to do that, add leading `^` and/or trailing `$` as needed.
+
+If several patterns match a branch, the first one wins.
 
 ## Custom Files Icon & Color
 
@@ -1036,6 +1193,12 @@ keybinding:
     edit: <disabled> # disable 'edit file'
 ```
 
+### Overriding the platform for default keybindings
+
+A few keybindings have different defaults on macOS than on Linux and Windows (e.g. word-wise cursor movement in text inputs uses `alt` on macOS but `ctrl` elsewhere). Lazygit picks these based on the OS it's running on, but you can override that with the `LAZYGIT_KEYBINDING_PLATFORM` environment variable. Set it to `darwin`, `linux`, or `windows`; any other value is ignored and the actual OS is used.
+
+This is useful when running lazygit in a Linux container that you access over ssh from a Mac, where you'd rather use the macOS keybindings.
+
 ### Example Keybindings For Colemak Users
 
 ```yaml
@@ -1082,6 +1245,8 @@ Where:
 - `gitDomain` stands for the domain used by git itself (i.e. the one present on clone URLs), e.g. `git.work.com`
 - `provider` is one of `github`, `bitbucket`, `bitbucketServer`, `azuredevops`, `gitlab`, `gitea` or `codeberg`
 - `webDomain` is the URL where your git service exposes a web interface and APIs, e.g. `gitservice.work.com`
+
+For the `github` provider, configuring an entry here also enables the pull-request icons in the branches panel for that host (e.g. a GitHub Enterprise Server instance). Lazygit picks up the auth token via the same mechanisms as the `gh` CLI: the `GH_ENTERPRISE_TOKEN` / `GITHUB_ENTERPRISE_TOKEN` environment variables, or `gh auth login --hostname <webDomain>`.
 
 ## Predefined commit message prefix
 

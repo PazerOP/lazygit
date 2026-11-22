@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -39,13 +38,13 @@ func NewWorktreesController(
 func (self *WorktreesController) GetKeybindings(opts types.KeybindingsOpts) []*types.Binding {
 	bindings := []*types.Binding{
 		{
-			Key:             opts.GetKey(opts.Config.Universal.New),
+			Keys:            opts.GetKeys(opts.Config.Universal.New),
 			Handler:         self.add,
 			Description:     self.c.Tr.NewWorktree,
 			DisplayOnScreen: true,
 		},
 		{
-			Key:               opts.GetKey(opts.Config.Universal.Select),
+			Keys:              opts.GetKeys(opts.Config.Universal.Select),
 			Handler:           self.withItem(self.enter),
 			GetDisabledReason: self.require(self.singleItemSelected()),
 			Description:       self.c.Tr.Switch,
@@ -53,18 +52,18 @@ func (self *WorktreesController) GetKeybindings(opts types.KeybindingsOpts) []*t
 			DisplayOnScreen:   true,
 		},
 		{
-			Key:               opts.GetKey(opts.Config.Universal.GoInto),
+			Keys:              opts.GetKeys(opts.Config.Universal.GoInto),
 			Handler:           self.withItem(self.enter),
 			GetDisabledReason: self.require(self.singleItemSelected()),
 		},
 		{
-			Key:               opts.GetKey(opts.Config.Universal.OpenFile),
+			Keys:              opts.GetKeys(opts.Config.Universal.OpenFile),
 			Handler:           self.withItem(self.open),
 			GetDisabledReason: self.require(self.singleItemSelected()),
 			Description:       self.c.Tr.OpenInEditor,
 		},
 		{
-			Key:               opts.GetKey(opts.Config.Universal.Remove),
+			Keys:              opts.GetKeys(opts.Config.Universal.Remove),
 			Handler:           self.withItem(self.remove),
 			GetDisabledReason: self.require(self.singleItemSelected()),
 			Description:       self.c.Tr.Remove,
@@ -122,15 +121,7 @@ func (self *WorktreesController) add() error {
 }
 
 func (self *WorktreesController) remove(worktree *models.Worktree) error {
-	if worktree.IsMain {
-		return errors.New(self.c.Tr.CantDeleteMainWorktree)
-	}
-
-	if worktree.IsCurrent {
-		return errors.New(self.c.Tr.CantDeleteCurrentWorktree)
-	}
-
-	return self.c.Helpers().Worktree.Remove(worktree, false)
+	return self.c.Helpers().BranchesHelper.RemoveWorktreeMenu(worktree)
 }
 
 func (self *WorktreesController) GetOnDoubleClick() func() error {

@@ -61,6 +61,24 @@ func TestRenderFileTree(t *testing.T) {
 			},
 		},
 		{
+			name: "directories that git status reports as a whole",
+			files: []*models.File{
+				{Path: "modules/sub", ShortStatus: "??", DirectoryKind: models.RemovedSubmodule},
+				{Path: "nested", ShortStatus: "??", DirectoryKind: models.NestedRepository},
+				{Path: "plain", ShortStatus: "??", DirectoryKind: models.PlainDirectory},
+				{Path: "worktree", ShortStatus: "??", DirectoryKind: models.NestedRepository, IsWorktree: true},
+			},
+			expected: toStringSlice(
+				`
+▼ modules
+  ?? sub (removed submodule)
+?? nested (nested repository)
+?? plain/
+?? worktree (worktree)
+`,
+			),
+		},
+		{
 			name: "big example",
 			files: []*models.File{
 				{Path: "dir1/file2", ShortStatus: "M ", HasUnstagedChanges: true},
@@ -123,7 +141,7 @@ M  file1
 			for _, path := range s.collapsedPaths {
 				viewModel.ToggleCollapsed(path)
 			}
-			result := RenderFileTree(viewModel, nil, false, s.showLineChanges, &config.CustomIconsConfig{}, s.showRootItem)
+			result := RenderFileTree(viewModel, nil, false, s.showLineChanges, &config.CustomIconsConfig{}, s.showRootItem, common.Tr)
 			assert.EqualValues(t, s.expected, result)
 		})
 	}
@@ -150,6 +168,14 @@ func TestRenderCommitFileTree(t *testing.T) {
 			},
 			showRootItem: true,
 			expected:     []string{"A test"},
+		},
+		{
+			name: "renamed file",
+			files: []*models.CommitFile{
+				{Path: "new.txt", PreviousPath: "old.txt", ChangeStatus: "R"},
+			},
+			showRootItem: false,
+			expected:     []string{"R old.txt → new.txt"},
 		},
 		{
 			name: "big example",
@@ -219,9 +245,10 @@ M file1
 			}
 			patchBuilder := patch.NewPatchBuilder(
 				utils.NewDummyLog(),
-				func(from string, to string, reverse bool, filename string, plain bool) (string, error) {
+				func(from string, to string, reverse bool, filename string, previousPath string) (string, error) {
 					return "", nil
 				},
+				nil,
 			)
 			patchBuilder.Start("from", "to", false, false)
 			result := RenderCommitFileTree(viewModel, patchBuilder, false, &config.CustomIconsConfig{})

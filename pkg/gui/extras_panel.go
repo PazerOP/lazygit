@@ -3,6 +3,8 @@ package gui
 import (
 	"io"
 
+	"github.com/jesseduffield/lazygit/pkg/config"
+	"github.com/jesseduffield/lazygit/pkg/gocui"
 	"github.com/jesseduffield/lazygit/pkg/gui/context"
 	"github.com/jesseduffield/lazygit/pkg/gui/style"
 	"github.com/jesseduffield/lazygit/pkg/gui/types"
@@ -14,7 +16,7 @@ func (gui *Gui) handleCreateExtrasMenuPanel() error {
 		Items: []*types.MenuItem{
 			{
 				Label: gui.c.Tr.ToggleShowCommandLog,
-				Key:   't',
+				Keys:  []gocui.Key{gocui.NewKeyRune('t')},
 				OnPress: func() error {
 					currentContext := gui.c.Context().CurrentStatic()
 					if gui.c.State().GetShowExtrasWindow() && currentContext.GetKey() == context.COMMAND_LOG_CONTEXT_KEY {
@@ -22,14 +24,15 @@ func (gui *Gui) handleCreateExtrasMenuPanel() error {
 					}
 					show := !gui.c.State().GetShowExtrasWindow()
 					gui.c.State().SetShowExtrasWindow(show)
-					gui.c.GetAppState().HideCommandLog = !show
-					gui.c.SaveAppStateAndLogError()
+					gui.c.UpdateAppState(func(state *config.AppState) {
+						state.HideCommandLog = !show
+					})
 					return nil
 				},
 			},
 			{
 				Label:   gui.c.Tr.FocusCommandLog,
-				Key:     'f',
+				Keys:    []gocui.Key{gocui.NewKeyRune('f')},
 				OnPress: gui.handleFocusCommandLog,
 			},
 		},

@@ -9,6 +9,7 @@ import (
 	"github.com/jesseduffield/lazygit/pkg/commands/git_commands"
 	"github.com/jesseduffield/lazygit/pkg/commands/models"
 	"github.com/jesseduffield/lazygit/pkg/common"
+	"github.com/jesseduffield/lazygit/pkg/gui/branchstack"
 	"github.com/jesseduffield/lazygit/pkg/gui/presentation/authors"
 	"github.com/jesseduffield/lazygit/pkg/gui/presentation/graph"
 	"github.com/jesseduffield/lazygit/pkg/gui/presentation/icons"
@@ -30,12 +31,11 @@ type pipeSetCacheKey struct {
 var (
 	pipeSetCache = make(map[pipeSetCacheKey][][]graph.Pipe)
 	mutex        deadlock.Mutex
-)
 
-type bisectBounds struct {
-	newIndex int
-	oldIndex int
-}
+	// The pipes have the colors of the authors of the commits they start at,
+	// so they are only good for as long as these colors don't change
+	pipeSetCacheAuthorColors = authors.ColorsVersion()
+)
 
 func GetCommitListDisplayStrings(
 	common *common.Common,
@@ -55,6 +55,7 @@ func GetCommitListDisplayStrings(
 	startIdx int,
 	endIdx int,
 	showGraph bool,
+	graphSymbolSet graph.SymbolSet,
 	bisectInfo *git_commands.BisectInfo,
 ) [][]string {
 	mutex.Lock()
@@ -72,8 +73,6 @@ func GetCommitListDisplayStrings(
 	rebaseOffset := min(indexOfFirstNonTODOCommit(commits), endIdx)
 
 	filteredCommits := commits[startIdx:endIdx]
-
-	bisectBounds := getbisectBounds(commits, bisectInfo)
 
 	// function expects to be passed the index of the commit in terms of the `commits` slice
 	var getGraphLine func(int) string
@@ -103,6 +102,7 @@ func GetCommitListDisplayStrings(
 						graphPipeSets,
 						graphCommits,
 						selectedCommitHashPtr,
+						graphSymbolSet,
 					)
 					allGraphLines = append(allGraphLines, graphLines...)
 				}
@@ -120,6 +120,7 @@ func GetCommitListDisplayStrings(
 						graphPipeSets,
 						graphCommits,
 						selectedCommitHashPtr,
+						graphSymbolSet,
 					)
 					allGraphLines = append(allGraphLines, graphLines...)
 				}
@@ -141,6 +142,7 @@ func GetCommitListDisplayStrings(
 				graphPipeSets,
 				graphCommits,
 				selectedCommitHashPtr,
+				graphSymbolSet,
 			)
 			getGraphLine = func(idx int) string {
 				if idx >= graphOffset {
@@ -177,12 +179,19 @@ func GetCommitListDisplayStrings(
 					(hasRebaseUpdateRefsConfig || b.CommitHash != commits[0].Hash())
 		}))
 
+	reservedWidths := getReservedColumnWidths(
+		commits, common.UserConfig().Gui.CommitHashLength, fullDescription,
+		timeFormat, shortTimeFormat, now, bisectInfo)
+
+	mergedIntoLocalMainBranch := branchstack.CommitsMergedIntoLocalMainBranch(
+		commits, branches, common.UserConfig().Git.MainBranches)
+
 	lines := make([][]string, 0, len(filteredCommits))
 	var bisectStatus BisectStatus
 	willBeRebased := markedBaseCommit == ""
 	for i, commit := range filteredCommits {
 		unfilteredIdx := i + startIdx
-		bisectStatus = getBisectStatus(unfilteredIdx, commit.Hash(), bisectInfo, bisectBounds)
+		bisectStatus = getBisectStatus(commit.Hash(), bisectInfo)
 		isMarkedBaseCommit := commit.Hash() != "" && commit.Hash() == markedBaseCommit
 		if isMarkedBaseCommit {
 			willBeRebased = true
@@ -191,6 +200,7 @@ func GetCommitListDisplayStrings(
 			common,
 			commit,
 			branchHeadsToVisualize,
+			mergedIntoLocalMainBranch.Includes(commit.Hash()),
 			hasRebaseUpdateRefsConfig,
 			cherryPickedCommitHashSet,
 			isMarkedBaseCommit,
@@ -204,32 +214,61 @@ func GetCommitListDisplayStrings(
 			fullDescription,
 			bisectStatus,
 			bisectInfo,
+			reservedWidths,
 		))
 	}
 	return lines
 }
 
-func getbisectBounds(commits []*models.Commit, bisectInfo *git_commands.BisectInfo) *bisectBounds {
-	if !bisectInfo.Bisecting() {
-		return nil
+// The width of a column is the width of the widest string in it, and a column
+// whose strings are all empty is left out entirely. The panels that show a
+// commit list hand over only the lines that are on screen, so several columns
+// would change their width, or come and go, as the user scrolls. These are the
+// widths those columns need for all the commits in the list.
+type reservedColumnWidths struct {
+	hash        int
+	bisect      int
+	description int
+	action      int
+}
+
+// precondition: commits is not empty
+func getReservedColumnWidths(
+	commits []*models.Commit,
+	hashLength int,
+	fullDescription bool,
+	timeFormat string,
+	shortTimeFormat string,
+	now time.Time,
+	bisectInfo *git_commands.BisectInfo,
+) reservedColumnWidths {
+	result := reservedColumnWidths{}
+
+	for _, commit := range commits {
+		result.hash = max(result.hash, utils.StringWidth(getHashText(commit, hashLength)))
+		if commit.IsTODO() {
+			result.action = max(result.action, utils.StringWidth(getActionText(commit)))
+		}
+		bisectStatus := getBisectStatus(commit.Hash(), bisectInfo)
+		result.bisect = max(result.bisect,
+			utils.StringWidth(getBisectStatusText(bisectStatus, bisectInfo)))
 	}
 
-	bisectBounds := &bisectBounds{}
-
-	for i, commit := range commits {
-		if commit.Hash() == bisectInfo.GetNewHash() {
-			bisectBounds.newIndex = i
-		}
-
-		status, ok := bisectInfo.Status(commit.Hash())
-		if ok && status == git_commands.BisectStatusOld {
-			bisectBounds.oldIndex = i
-			return bisectBounds
-		}
+	if fullDescription {
+		// Formatting the date of every commit on every render would be too
+		// expensive, so measure the oldest one only. It is the one least likely
+		// to be from today, and so the one most likely to be shown in the long
+		// time format; with a conventional time format that one is both wider
+		// than the short format and the same width for every date, which makes
+		// it the width the whole column needs. An unconventional format can
+		// break either of those assumptions, and then some of the column's
+		// width still comes and goes; it can never reserve more width than one
+		// of the commits asks for, though.
+		result.description = utils.StringWidth(utils.UnixToDateSmart(
+			now, commits[len(commits)-1].UnixTimestamp, timeFormat, shortTimeFormat))
 	}
 
-	// shouldn't land here
-	return nil
+	return result
 }
 
 // precondition: slice is not empty
@@ -245,6 +284,11 @@ func indexOfFirstNonTODOCommit(commits []*models.Commit) int {
 }
 
 func loadPipesets(commits []*models.Commit) [][]graph.Pipe {
+	if pipeSetCacheAuthorColors != authors.ColorsVersion() {
+		pipeSetCache = make(map[pipeSetCacheKey][][]graph.Pipe)
+		pipeSetCacheAuthorColors = authors.ColorsVersion()
+	}
+
 	// given that our cache key is a commit hash and a commit count, it's very important that we don't actually try to render pipes
 	// when dealing with things like filtered commits.
 	cacheKey := pipeSetCacheKey{
@@ -275,19 +319,18 @@ const (
 	BisectStatusOld
 	BisectStatusNew
 	BisectStatusSkipped
-	// adding candidate here which isn't present in the commands package because
-	// we need to actually go through the commits to get this info
+	// a commit that has no mark, and that the bisect hasn't ruled out yet
 	BisectStatusCandidate
 	// also adding this
 	BisectStatusCurrent
 )
 
-func getBisectStatus(index int, commitHash string, bisectInfo *git_commands.BisectInfo, bisectBounds *bisectBounds) BisectStatus {
+func getBisectStatus(commitHash string, bisectInfo *git_commands.BisectInfo) BisectStatus {
 	if !bisectInfo.Started() {
 		return BisectStatusNone
 	}
 
-	if bisectInfo.GetCurrentHash() == commitHash {
+	if bisectInfo.HasCommitToTest() && bisectInfo.GetCurrentHash() == commitHash {
 		return BisectStatusCurrent
 	}
 
@@ -302,7 +345,7 @@ func getBisectStatus(index int, commitHash string, bisectInfo *git_commands.Bise
 			return BisectStatusSkipped
 		}
 	} else {
-		if bisectBounds != nil && index >= bisectBounds.newIndex && index <= bisectBounds.oldIndex {
+		if bisectInfo.IsCandidate(commitHash) {
 			return BisectStatusCandidate
 		}
 		return BisectStatusNone
@@ -313,24 +356,18 @@ func getBisectStatus(index int, commitHash string, bisectInfo *git_commands.Bise
 }
 
 func getBisectStatusText(bisectStatus BisectStatus, bisectInfo *git_commands.BisectInfo) string {
-	if bisectStatus == BisectStatusNone {
-		return ""
-	}
-
-	style := getBisectStatusColor(bisectStatus)
-
 	switch bisectStatus {
 	case BisectStatusNew:
-		return style.Sprintf("<-- " + bisectInfo.NewTerm())
+		return "<-- " + bisectInfo.NewTerm()
 	case BisectStatusOld:
-		return style.Sprintf("<-- " + bisectInfo.OldTerm())
+		return "<-- " + bisectInfo.OldTerm()
 	case BisectStatusCurrent:
 		// TODO: i18n
-		return style.Sprintf("<-- current")
+		return "<-- current"
 	case BisectStatusSkipped:
-		return style.Sprintf("<-- skipped")
+		return "<-- skipped"
 	case BisectStatusCandidate:
-		return style.Sprintf("?")
+		return "?"
 	case BisectStatusNone:
 		return ""
 	}
@@ -338,10 +375,38 @@ func getBisectStatusText(bisectStatus BisectStatus, bisectInfo *git_commands.Bis
 	return ""
 }
 
+func getHashText(commit *models.Commit, hashLength int) string {
+	hash := commit.Hash()
+	if hashLength >= len(hash) {
+		return hash
+	}
+	if hashLength > 0 {
+		return hash[:hashLength]
+	}
+	if !icons.IsIconEnabled() { // hashLength <= 0
+		return "*"
+	}
+	return ""
+}
+
+func getActionText(commit *models.Commit) string {
+	if commit.Action == models.ActionNone {
+		return ""
+	}
+
+	text := commit.Action.String()
+	// Only show the flag for fixup commands (where -C changes the meaning)
+	if commit.ActionFlag != "" && commit.Action == todo.Fixup {
+		text += " " + commit.ActionFlag
+	}
+	return text
+}
+
 func displayCommit(
 	common *common.Common,
 	commit *models.Commit,
 	branchHeadsToVisualize *set.Set[string],
+	isMergedIntoLocalMainBranch bool,
 	hasRebaseUpdateRefsConfig bool,
 	cherryPickedCommitHashSet *set.Set[string],
 	isMarkedBaseCommit bool,
@@ -355,18 +420,17 @@ func displayCommit(
 	fullDescription bool,
 	bisectStatus BisectStatus,
 	bisectInfo *git_commands.BisectInfo,
+	reservedWidths reservedColumnWidths,
 ) []string {
-	bisectString := getBisectStatusText(bisectStatus, bisectInfo)
+	bisectString := ""
+	if bisectText := getBisectStatusText(bisectStatus, bisectInfo); bisectText != "" {
+		bisectString = getBisectStatusColor(bisectStatus).Sprint(bisectText)
+	}
 
-	hashString := ""
 	hashColor := getHashColor(commit, diffName, cherryPickedCommitHashSet, bisectStatus, bisectInfo)
-	hashLength := common.UserConfig().Gui.CommitHashLength
-	if hashLength >= len(commit.Hash()) {
-		hashString = hashColor.Sprint(commit.Hash())
-	} else if hashLength > 0 {
-		hashString = hashColor.Sprint(commit.Hash()[:hashLength])
-	} else if !icons.IsIconEnabled() { // hashLength <= 0
-		hashString = hashColor.Sprint("*")
+	hashString := ""
+	if hashText := getHashText(commit, common.UserConfig().Gui.CommitHashLength); hashText != "" {
+		hashString = hashColor.Sprint(hashText)
 	}
 
 	divergenceString := ""
@@ -384,13 +448,8 @@ func displayCommit(
 	}
 
 	actionString := ""
-	if commit.Action != models.ActionNone {
-		actionStr := commit.Action.String()
-		// Only show the flag for fixup commands (where -C changes the meaning)
-		if commit.ActionFlag != "" && commit.Action == todo.Fixup {
-			actionStr += " " + commit.ActionFlag
-		}
-		actionString = actionColorMap(commit.Action, commit.Status).Sprint(actionStr)
+	if actionText := getActionText(commit); actionText != "" {
+		actionString = actionColorMap(commit.Action, commit.Status).Sprint(actionText)
 	}
 
 	tagString := ""
@@ -404,8 +463,9 @@ func displayCommit(
 		}
 
 		if branchHeadsToVisualize.Includes(commit.Hash()) &&
-			// Don't show branch head on commits that are already merged to a main branch
-			commit.Status != models.StatusMerged &&
+			// Don't show branch head on commits that are already merged to a
+			// main branch, be it its remote branch or the local one
+			commit.Status != models.StatusMerged && !isMergedIntoLocalMainBranch &&
 			// Don't show branch head on a "pick" todo if the rebase.updateRefs config is on
 			!(commit.IsTODO() && hasRebaseUpdateRefsConfig) {
 			tagString = style.FgCyan.SetBold().Sprint(
@@ -443,10 +503,10 @@ func displayCommit(
 	cols = append(
 		cols,
 		divergenceString,
-		hashString,
-		bisectString,
-		descriptionString,
-		actionString,
+		utils.WithPadding(hashString, reservedWidths.hash, utils.AlignLeft),
+		utils.WithPadding(bisectString, reservedWidths.bisect, utils.AlignLeft),
+		utils.WithPadding(descriptionString, reservedWidths.description, utils.AlignLeft),
+		utils.WithPadding(actionString, reservedWidths.action, utils.AlignLeft),
 		author,
 		graphLine+mark+tagString+theme.DefaultTextColor.Sprint(name),
 	)
@@ -457,7 +517,7 @@ func displayCommit(
 func getBisectStatusColor(status BisectStatus) style.TextStyle {
 	switch status {
 	case BisectStatusNone:
-		return style.FgBlack
+		return theme.DefaultTextColor.SetDim()
 	case BisectStatusNew:
 		return style.FgRed
 	case BisectStatusOld:
@@ -494,7 +554,7 @@ func getHashColor(
 		hashColor = style.FgYellow
 	case models.StatusMerged:
 		hashColor = style.FgGreen
-	case models.StatusRebasing, models.StatusCherryPickingOrReverting, models.StatusConflicted:
+	case models.StatusRebasing, models.StatusCherryPickingOrReverting, models.StatusApplyingPatch, models.StatusConflicted:
 		hashColor = style.FgBlue
 	case models.StatusReflog:
 		hashColor = style.FgBlue

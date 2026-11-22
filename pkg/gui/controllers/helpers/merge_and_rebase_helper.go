@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/jesseduffield/gocui"
 	"github.com/jesseduffield/lazygit/pkg/commands/git_commands"
 	"github.com/jesseduffield/lazygit/pkg/commands/models"
+	"github.com/jesseduffield/lazygit/pkg/gocui"
 	"github.com/jesseduffield/lazygit/pkg/gui/types"
 	"github.com/jesseduffield/lazygit/pkg/utils"
 	"github.com/samber/lo"
@@ -18,6 +18,13 @@ import (
 
 type MergeAndRebaseHelper struct {
 	c *HelperCommon
+
+	// Whether the "continue the rebase/merge?" prompt is currently on screen.
+	// We use this to auto-dismiss it if the operation stops being in the state
+	// that the prompt is offering to act on (e.g. it was continued or aborted
+	// externally), so the user isn't left with a stale prompt. Only accessed on
+	// the UI thread.
+	continueRebasePromptShowing bool
 }
 
 func NewMergeAndRebaseHelper(
@@ -39,17 +46,17 @@ const (
 func (self *MergeAndRebaseHelper) CreateRebaseOptionsMenu() error {
 	type optionAndKey struct {
 		option string
-		key    types.Key
+		keys   []gocui.Key
 	}
 
 	options := []optionAndKey{
-		{option: REBASE_OPTION_CONTINUE, key: 'c'},
-		{option: REBASE_OPTION_ABORT, key: 'a'},
+		{option: REBASE_OPTION_CONTINUE, keys: menuKey('c')},
+		{option: REBASE_OPTION_ABORT, keys: menuKey('a')},
 	}
 
 	if self.c.Git().Status.WorkingTreeState().CanSkip() {
 		options = append(options, optionAndKey{
-			option: REBASE_OPTION_SKIP, key: 's',
+			option: REBASE_OPTION_SKIP, keys: menuKey('s'),
 		})
 	}
 
@@ -57,9 +64,12 @@ func (self *MergeAndRebaseHelper) CreateRebaseOptionsMenu() error {
 		return &types.MenuItem{
 			Label: row.option,
 			OnPress: func() error {
+				if row.option == REBASE_OPTION_ABORT {
+					return self.abortMergeOrRebase(false)
+				}
 				return self.genericMergeCommand(row.option)
 			},
-			Key: row.key,
+			Keys: row.keys,
 		}
 	})
 
@@ -72,6 +82,23 @@ func (self *MergeAndRebaseHelper) ContinueRebase() error {
 }
 
 func (self *MergeAndRebaseHelper) genericMergeCommand(command string) error {
+	// The menu/prompt/confirm handlers that reach here run on the UI thread and
+	// spin up a worker (via the waiting status below) to do the actual work.
+	return self.genericMergeCommandImpl(command, true, false)
+}
+
+// genericMergeCommandImpl runs a merge/rebase continue/skip/abort and handles
+// the result. Continuing can be slow (it may replay many commits), so the
+// non-subprocess path runs on a worker with a waiting status.
+//
+// showWaitingStatus is false only for the recursive auto-skip in
+// CheckMergeOrRebaseWithRefreshOptions and for aborting after discarding
+// changes in abortMergeOrRebase; both already run on a worker, so they must not
+// spin up a second waiting status. calledFromWorker is used only by the
+// subprocess path below: it's true for that recursive worker skip and false for
+// genericMergeCommand's UI-thread invocation, so the post-action refresh picks
+// RefreshFromWorker vs Refresh correctly.
+func (self *MergeAndRebaseHelper) genericMergeCommandImpl(command string, showWaitingStatus bool, calledFromWorker bool) error {
 	status := self.c.Git().Status.WorkingTreeState()
 
 	if status.None() {
@@ -94,39 +121,82 @@ func (self *MergeAndRebaseHelper) genericMergeCommand(command string) error {
 		}
 	}
 
-	commandType := status.CommandName()
+	isMerging := effectiveStatus == models.WORKING_TREE_STATE_MERGING ||
+		effectiveStatus == models.WORKING_TREE_STATE_SQUASH_MERGING
+	selectHeadCommitOnSuccess := command == REBASE_OPTION_CONTINUE && isMerging
 
 	// we should end up with a command like 'git merge --continue'
 
 	// it's impossible for a rebase to require a commit so we'll use a subprocess only if it's a merge
-	needsSubprocess := (effectiveStatus == models.WORKING_TREE_STATE_MERGING && command != REBASE_OPTION_ABORT && self.c.UserConfig().Git.Merging.ManualCommit) ||
+	needsSubprocess := (isMerging && command != REBASE_OPTION_ABORT && self.c.UserConfig().Git.Merging.ManualCommit) ||
 		// but we'll also use a subprocess if we have exec todos; those are likely to be lengthy build
 		// tasks whose output the user will want to see in the terminal
-		(effectiveStatus == models.WORKING_TREE_STATE_REBASING && command != REBASE_OPTION_ABORT && self.hasExecTodos())
+		(effectiveStatus == models.WORKING_TREE_STATE_REBASING && command != REBASE_OPTION_ABORT && self.hasExecTodos(calledFromWorker))
 
 	if needsSubprocess {
 		// TODO: see if we should be calling more of the code from self.Git.Rebase.GenericMergeOrRebaseAction
-		return self.c.RunSubprocessAndRefresh(
-			self.c.Git().Rebase.GenericMergeOrRebaseActionCmdObj(commandType, command),
-		)
-	}
-	result := self.c.Git().Rebase.GenericMergeOrRebaseAction(commandType, command)
-	if err := self.CheckMergeOrRebase(result); err != nil {
+		success, err := self.c.RunSubprocess(self.c.Git().Rebase.GenericMergeOrRebaseActionCmdObj(effectiveStatus, command))
+		self.refreshAfterMergeOrRebase(types.RefreshOptions{
+			CommitSelection: commitSelectionAfterMerge(success && selectHeadCommitOnSuccess),
+		}, calledFromWorker)
+		self.RecordWhetherMergeOrRebaseStartedInLazygit()
 		return err
 	}
-	return nil
+
+	// runAction always ends up on a worker: either the waiting status below spins
+	// one up, or we're the recursive auto-skip reached from
+	// CheckMergeOrRebaseWithRefreshOptions or the abort in abortMergeOrRebase,
+	// which already run on one.
+	runAction := func() error {
+		result := self.c.Git().Rebase.GenericMergeOrRebaseAction(effectiveStatus, command)
+		return self.CheckMergeOrRebaseWithRefreshOptions(result,
+			types.RefreshOptions{
+				CommitSelection: commitSelectionAfterMerge(result == nil && selectHeadCommitOnSuccess),
+			})
+	}
+
+	if showWaitingStatus {
+		return self.c.WithWaitingStatus(status.Title(self.c.Tr), func(gocui.Task) error {
+			return runAction()
+		})
+	}
+	return runAction()
 }
 
-func (self *MergeAndRebaseHelper) hasExecTodos() bool {
-	for _, commit := range self.c.Model().Commits {
-		if !commit.IsTODO() {
-			break
-		}
-		if commit.Action == todo.Exec {
-			return true
-		}
+// commitSelectionAfterMerge maps whether a merge/rebase/pull created a new
+// commit at HEAD to the corresponding commit-selection behavior: select that
+// new commit, or otherwise keep the previous selection by hash.
+func commitSelectionAfterMerge(createdNewCommit bool) types.CommitSelectionBehavior {
+	if createdNewCommit {
+		return types.SelectHeadCommit
 	}
-	return false
+	return types.KeepCommitSelectionByHash
+}
+
+func (self *MergeAndRebaseHelper) hasExecTodos(calledFromWorker bool) bool {
+	check := func() bool {
+		for _, commit := range self.c.Model().Commits {
+			if !commit.IsTODO() {
+				break
+			}
+			if commit.Action == todo.Exec {
+				return true
+			}
+		}
+		return false
+	}
+
+	// This reads the model, which is only safe on the UI thread, so bounce there
+	// when we're being called from a worker.
+	if !calledFromWorker {
+		return check()
+	}
+
+	result := false
+	_ = self.c.GocuiGui().OnUIThreadAndWait(func() {
+		result = check()
+	})
+	return result
 }
 
 var conflictStrings = []string{
@@ -149,15 +219,37 @@ func isMergeConflictErr(errStr string) bool {
 	return false
 }
 
+// RecordWhetherMergeOrRebaseStartedInLazygit is called right after we run a
+// merge/rebase/cherry-pick/revert step. If it left an operation in progress,
+// that operation is one we started, which is what later lets us auto-prompt to
+// continue it once its conflicts are resolved. If nothing is in progress
+// anymore (the step completed or aborted the operation), we clear the flag.
+func (self *MergeAndRebaseHelper) RecordWhetherMergeOrRebaseStartedInLazygit() {
+	self.c.State().GetRepoState().SetMergeOrRebaseStartedInLazygit(
+		self.c.Git().Status.WorkingTreeState().Any())
+}
+
+// CheckMergeOrRebaseWithRefreshOptions handles the result of a merge/rebase
+// step and refreshes. It always runs on a worker (the WithWaitingStatus /
+// WithWaitingStatusBlockingInput / WithInlineStatus handlers).
 func (self *MergeAndRebaseHelper) CheckMergeOrRebaseWithRefreshOptions(result error, refreshOptions types.RefreshOptions) error {
-	self.c.Refresh(refreshOptions)
+	self.refreshAfterMergeOrRebase(refreshOptions, true)
+
+	self.RecordWhetherMergeOrRebaseStartedInLazygit()
 
 	if result == nil {
 		return nil
 	} else if strings.Contains(result.Error(), "No changes - did you forget to use") {
-		return self.genericMergeCommand(REBASE_OPTION_SKIP)
+		if self.c.Git().Status.WorkingTreeState().ApplyingPatches {
+			// "git am" says this not only if resolving the conflicts of a patch
+			// left nothing to commit, but also if the patch didn't apply at
+			// all. Without --3way, it leaves the files alone then, and skipping
+			// would lose the patch. Show git's explanation instead.
+			return result
+		}
+		return self.genericMergeCommandImpl(REBASE_OPTION_SKIP, false, true)
 	} else if strings.Contains(result.Error(), "The previous cherry-pick is now empty") {
-		return self.genericMergeCommand(REBASE_OPTION_SKIP)
+		return self.genericMergeCommandImpl(REBASE_OPTION_SKIP, false, true)
 	} else if strings.Contains(result.Error(), "No rebase in progress?") {
 		// assume in this case that we're already done
 		return nil
@@ -165,8 +257,29 @@ func (self *MergeAndRebaseHelper) CheckMergeOrRebaseWithRefreshOptions(result er
 	return self.CheckForConflicts(result)
 }
 
+// refreshAfterMergeOrRebase issues the post-action refresh on the entry point
+// that matches the thread the merge/rebase ran on: RefreshFromWorker for the
+// worker callers, Refresh for the merge/rebase-continue subprocess path that
+// stays on the UI thread.
+func (self *MergeAndRebaseHelper) refreshAfterMergeOrRebase(refreshOptions types.RefreshOptions, calledFromWorker bool) {
+	if calledFromWorker {
+		self.c.RefreshFromWorker(refreshOptions)
+	} else {
+		self.c.Refresh(refreshOptions)
+	}
+}
+
 func (self *MergeAndRebaseHelper) CheckMergeOrRebase(result error) error {
-	return self.CheckMergeOrRebaseWithRefreshOptions(result, types.RefreshOptions{Mode: types.ASYNC})
+	return self.CheckMergeOrRebaseWithRefreshOptions(result, types.RefreshOptions{})
+}
+
+// Like CheckMergeOrRebase, but for operations that create a new commit at HEAD
+// (a merge, or a pull that merges): on success it selects that new commit,
+// which the keep-selection-by-hash logic can't do since the commit didn't exist
+// before the refresh.
+func (self *MergeAndRebaseHelper) CheckMergeOrRebaseAndSelectHeadCommit(result error) error {
+	return self.CheckMergeOrRebaseWithRefreshOptions(result,
+		types.RefreshOptions{CommitSelection: commitSelectionAfterMerge(result == nil)})
 }
 
 func (self *MergeAndRebaseHelper) CheckForConflicts(result error) error {
@@ -182,7 +295,7 @@ func (self *MergeAndRebaseHelper) CheckForConflicts(result error) error {
 }
 
 func (self *MergeAndRebaseHelper) PromptForConflictHandling() error {
-	mode := self.c.Git().Status.WorkingTreeState().CommandName()
+	operation := self.c.Git().Status.WorkingTreeState().OperationName(self.c.Tr)
 	return self.c.Menu(types.CreateMenuOptions{
 		Title: self.c.Tr.FoundConflictsTitle,
 		Items: []*types.MenuItem{
@@ -194,11 +307,12 @@ func (self *MergeAndRebaseHelper) PromptForConflictHandling() error {
 				},
 			},
 			{
-				Label: fmt.Sprintf(self.c.Tr.AbortMenuItem, mode),
+				Label: utils.ResolvePlaceholderString(self.c.Tr.AbortOperationMenuItem,
+					map[string]string{"operation": operation}),
 				OnPress: func() error {
-					return self.genericMergeCommand(REBASE_OPTION_ABORT)
+					return self.abortMergeOrRebase(false)
 				},
-				Key: 'a',
+				Keys: menuKey('a'),
 			},
 		},
 		HideCancel: true,
@@ -206,25 +320,107 @@ func (self *MergeAndRebaseHelper) PromptForConflictHandling() error {
 }
 
 func (self *MergeAndRebaseHelper) AbortMergeOrRebaseWithConfirm() error {
-	// prompt user to confirm that they want to abort, then do it
-	mode := self.c.Git().Status.WorkingTreeState().CommandName()
-	self.c.Confirm(types.ConfirmOpts{
-		Title:  fmt.Sprintf(self.c.Tr.AbortTitle, mode),
-		Prompt: fmt.Sprintf(self.c.Tr.AbortPrompt, mode),
-		HandleConfirm: func() error {
-			return self.genericMergeCommand(REBASE_OPTION_ABORT)
-		},
-	})
+	return self.abortMergeOrRebase(true)
+}
 
-	return nil
+// abortMergeOrRebase aborts the operation in progress. If alwaysConfirm is
+// false, it asks the user to confirm only if it has to discard changes before
+// git can abort.
+func (self *MergeAndRebaseHelper) abortMergeOrRebase(alwaysConfirm bool) error {
+	status := self.c.Git().Status.WorkingTreeState()
+	placeholders := map[string]string{
+		"operation": status.OperationName(self.c.Tr),
+	}
+
+	pathsToDiscard := pathsToDiscardBeforeAbort(status, self.c.Model().Files, self.c.Model().Submodules)
+	if len(pathsToDiscard) > 0 {
+		self.c.Confirm(types.ConfirmOpts{
+			Title: utils.ResolvePlaceholderString(self.c.Tr.AbortOperationTitle, placeholders),
+			Prompt: utils.ResolvePlaceholderString(self.c.Tr.AbortOperationDiscardsChangesPrompt, placeholders) +
+				"\n\n- " + strings.Join(pathsToDiscard, "\n- "),
+			HandleConfirm: func() error {
+				return self.c.WithWaitingStatus(status.Title(self.c.Tr), func(gocui.Task) error {
+					self.c.LogAction(self.c.Tr.Actions.DiscardAllUnstagedChangesInFile)
+					if err := self.c.Git().WorkingTree.DiscardUnstagedChanges(pathsToDiscard); err != nil {
+						return err
+					}
+					return self.genericMergeCommandImpl(REBASE_OPTION_ABORT, false, true)
+				})
+			},
+		})
+		return nil
+	}
+
+	if alwaysConfirm {
+		self.c.Confirm(types.ConfirmOpts{
+			Title:  utils.ResolvePlaceholderString(self.c.Tr.AbortOperationTitle, placeholders),
+			Prompt: utils.ResolvePlaceholderString(self.c.Tr.AbortOperationPrompt, placeholders),
+			HandleConfirm: func() error {
+				return self.genericMergeCommand(REBASE_OPTION_ABORT)
+			},
+		})
+		return nil
+	}
+
+	return self.genericMergeCommand(REBASE_OPTION_ABORT)
+}
+
+// pathsToDiscardBeforeAbort returns the files whose unstaged changes we have to
+// discard before git can abort the operation in progress.
+//
+// Git refuses to start a merge, cherry-pick, revert or "git am" if there are
+// staged changes, or if a file that it has to change has unstaged changes. It
+// does start a squash merge that it can fast-forward while there are staged
+// changes, but we don't offer squash merges then. Therefore, if a file has
+// staged changes during the operation, git staged them (or the user did after
+// git stopped), and any unstaged changes on top of them were made after git
+// stopped, for example to fix the build. Git's abort command keeps unstaged
+// changes, but it fails if they are on top of staged changes that it has to
+// reset. A rebase is different. It refuses to start if there are any changes,
+// and its abort command discards all changes.
+func pathsToDiscardBeforeAbort(status models.WorkingTreeState, files []*models.File, submoduleConfigs []*models.SubmoduleConfig) []string {
+	if status.Effective() == models.WORKING_TREE_STATE_REBASING {
+		return nil
+	}
+
+	return lo.FilterMap(files, func(file *models.File, _ int) (string, bool) {
+		return file.Path, file.HasStagedChanges && file.HasUnstagedChanges && !file.HasMergeConflicts &&
+			!file.IsSubmodule(submoduleConfigs)
+	})
+}
+
+// AbortSquashMergeIfNoChangesAreLeft aborts a squash merge in progress if there
+// are no changes left, for example because the user discarded them. Otherwise,
+// SQUASH_MSG would keep the squash merge in progress until the next commit,
+// and that commit would get its message. Untracked files don't count, because
+// a squash merge stages the files that it adds.
+func (self *MergeAndRebaseHelper) AbortSquashMergeIfNoChangesAreLeft() error {
+	if self.c.Git().Status.WorkingTreeState().Effective() != models.WORKING_TREE_STATE_SQUASH_MERGING {
+		return nil
+	}
+
+	if lo.SomeBy(self.c.Model().Files, func(file *models.File) bool { return file.Tracked || file.HasStagedChanges }) {
+		return nil
+	}
+
+	return self.genericMergeCommand(REBASE_OPTION_ABORT)
 }
 
 // PromptToContinueRebase asks the user if they want to continue the rebase/merge that's in progress
-func (self *MergeAndRebaseHelper) PromptToContinueRebase() error {
+func (self *MergeAndRebaseHelper) PromptToContinueRebase() {
+	self.continueRebasePromptShowing = true
 	self.c.Confirm(types.ConfirmOpts{
-		Title:  self.c.Tr.Continue,
-		Prompt: fmt.Sprintf(self.c.Tr.ConflictsResolved, self.c.Git().Status.WorkingTreeState().CommandName()),
+		Title: self.c.Tr.Continue,
+		Prompt: utils.ResolvePlaceholderString(self.c.Tr.ContinueAfterConflictsResolved, map[string]string{
+			"operation": self.c.Git().Status.WorkingTreeState().OperationName(self.c.Tr),
+		}),
+		HandleClose: func() error {
+			self.continueRebasePromptShowing = false
+			return nil
+		},
 		HandleConfirm: func() error {
+			self.continueRebasePromptShowing = false
+
 			// By the time we get here, we might have unstaged changes again,
 			// e.g. if the user had to fix build errors after resolving the
 			// conflicts, but after lazygit opened the prompt already. Ask again
@@ -233,40 +429,65 @@ func (self *MergeAndRebaseHelper) PromptToContinueRebase() error {
 			// Need to refresh the files to be really sure if this is the case.
 			// We would otherwise be relying on lazygit's auto-refresh on focus,
 			// but this is not supported by all terminals or on all platforms.
+			//
+			// The model.Files update is bounced onto the UI thread, so we have
+			// to read it in Then; reading it inline here would see the previous
+			// model.
 			self.c.Refresh(types.RefreshOptions{
-				Mode: types.SYNC, Scope: []types.RefreshableView{types.FILES},
+				Scope: []types.RefreshableView{types.FILES},
+				Then: func() error {
+					unstagedFiles := GetUnstagedFilesExceptSubmodules(self.c.Model().Files, self.c.Model().Submodules)
+					if len(unstagedFiles) > 0 {
+						self.c.Confirm(types.ConfirmOpts{
+							Title:  self.c.Tr.Continue,
+							Prompt: self.c.Tr.UnstagedFilesAfterConflictsResolved,
+							HandleConfirm: func() error {
+								self.c.LogAction(self.c.Tr.Actions.StageAllFiles)
+								if err := self.c.Git().WorkingTree.StageFiles(unstagedFiles, []string{}); err != nil {
+									return err
+								}
+
+								return self.genericMergeCommand(REBASE_OPTION_CONTINUE)
+							},
+						})
+
+						return nil
+					}
+
+					return self.genericMergeCommand(REBASE_OPTION_CONTINUE)
+				},
 			})
 
-			root := self.c.Contexts().Files.FileTreeViewModel.GetRoot()
-			if root.GetHasUnstagedChanges() {
-				self.c.Confirm(types.ConfirmOpts{
-					Title:  self.c.Tr.Continue,
-					Prompt: self.c.Tr.UnstagedFilesAfterConflictsResolved,
-					HandleConfirm: func() error {
-						self.c.LogAction(self.c.Tr.Actions.StageAllFiles)
-						if err := self.c.Git().WorkingTree.StageAll(true); err != nil {
-							return err
-						}
-
-						return self.genericMergeCommand(REBASE_OPTION_CONTINUE)
-					},
-				})
-
-				return nil
-			}
-
-			return self.genericMergeCommand(REBASE_OPTION_CONTINUE)
+			return nil
 		},
 	})
+}
 
-	return nil
+// DismissContinueRebasePromptIfShowing closes the "continue the rebase/merge?"
+// prompt if it's currently on screen. It's called when the operation is no
+// longer in the state the prompt is offering to act on (e.g. it was continued
+// or aborted outside lazygit, or new conflicts have appeared), so that the
+// user isn't left with a prompt whose "continue" would now be wrong or fail.
+// Must be called on the UI thread.
+func (self *MergeAndRebaseHelper) DismissContinueRebasePromptIfShowing() {
+	if !self.continueRebasePromptShowing {
+		return
+	}
+
+	self.continueRebasePromptShowing = false
+
+	// Guard against popping something else: while our prompt is up no other
+	// popup can open, and confirming or closing it would have cleared the flag,
+	// so if it's set the confirmation context is ours.
+	if self.c.Context().Current() == self.c.Contexts().Confirmation {
+		self.c.Context().Pop()
+	}
 }
 
 func (self *MergeAndRebaseHelper) RebaseOntoRef(ref string) error {
 	checkedOutBranch := self.c.Model().Branches[0]
-	checkedOutBranchName := checkedOutBranch.Name
 	var disabledReason, baseBranchDisabledReason *types.DisabledReason
-	if checkedOutBranchName == ref {
+	if checkedOutBranch.Name == ref {
 		disabledReason = &types.DisabledReason{Text: self.c.Tr.CantRebaseOntoSelf}
 	}
 
@@ -284,12 +505,12 @@ func (self *MergeAndRebaseHelper) RebaseOntoRef(ref string) error {
 			Label: utils.ResolvePlaceholderString(self.c.Tr.SimpleRebase,
 				map[string]string{"ref": ref},
 			),
-			Key:            's',
+			Keys:           menuKey('s'),
 			DisabledReason: disabledReason,
 			OnPress: func() error {
 				self.c.LogAction(self.c.Tr.Actions.RebaseBranch)
+				baseCommit := self.c.Modes().MarkedBaseCommit.GetHash()
 				return self.c.WithWaitingStatus(self.c.Tr.RebasingStatus, func(task gocui.Task) error {
-					baseCommit := self.c.Modes().MarkedBaseCommit.GetHash()
 					var err error
 					if baseCommit != "" {
 						err = self.c.Git().Rebase.RebaseBranchFromBaseCommit(ref, baseCommit)
@@ -298,7 +519,9 @@ func (self *MergeAndRebaseHelper) RebaseOntoRef(ref string) error {
 					}
 					err = self.CheckMergeOrRebase(err)
 					if err == nil {
-						return self.ResetMarkedBaseCommit()
+						self.c.OnUIThread(func() error {
+							return self.ResetMarkedBaseCommit()
+						})
 					}
 					return err
 				})
@@ -308,39 +531,44 @@ func (self *MergeAndRebaseHelper) RebaseOntoRef(ref string) error {
 			Label: utils.ResolvePlaceholderString(self.c.Tr.InteractiveRebase,
 				map[string]string{"ref": ref},
 			),
-			Key:            'i',
+			Keys:           menuKey('i'),
 			DisabledReason: disabledReason,
 			Tooltip:        self.c.Tr.InteractiveRebaseTooltip,
 			OnPress: func() error {
 				self.c.LogAction(self.c.Tr.Actions.RebaseBranch)
 				baseCommit := self.c.Modes().MarkedBaseCommit.GetHash()
-				var err error
-				if baseCommit != "" {
-					err = self.c.Git().Rebase.EditRebaseFromBaseCommit(ref, baseCommit)
-				} else {
-					err = self.c.Git().Rebase.EditRebase(ref)
-				}
-				if err = self.CheckMergeOrRebase(err); err != nil {
-					return err
-				}
-				if err = self.ResetMarkedBaseCommit(); err != nil {
-					return err
-				}
-				self.c.Context().Push(self.c.Contexts().LocalCommits, types.OnFocusOpts{})
-				return nil
+				return self.c.WithWaitingStatus(self.c.Tr.RebasingStatus, func(task gocui.Task) error {
+					var err error
+					if baseCommit != "" {
+						err = self.c.Git().Rebase.EditRebaseFromBaseCommit(ref, baseCommit)
+					} else {
+						err = self.c.Git().Rebase.EditRebase(ref)
+					}
+					if err = self.CheckMergeOrRebase(err); err != nil {
+						return err
+					}
+					self.c.OnUIThread(func() error {
+						if err := self.ResetMarkedBaseCommit(); err != nil {
+							return err
+						}
+						self.c.Context().Push(self.c.Contexts().LocalCommits, types.OnFocusOpts{})
+						return nil
+					})
+					return nil
+				})
 			},
 		},
 		{
 			Label: utils.ResolvePlaceholderString(self.c.Tr.RebaseOntoBaseBranch,
 				map[string]string{"baseBranch": ShortBranchName(baseBranch)},
 			),
-			Key:            'b',
+			Keys:           menuKey('b'),
 			DisabledReason: baseBranchDisabledReason,
 			Tooltip:        self.c.Tr.RebaseOntoBaseBranchTooltip,
 			OnPress: func() error {
 				self.c.LogAction(self.c.Tr.Actions.RebaseBranch)
+				baseCommit := self.c.Modes().MarkedBaseCommit.GetHash()
 				return self.c.WithWaitingStatus(self.c.Tr.RebasingStatus, func(task gocui.Task) error {
-					baseCommit := self.c.Modes().MarkedBaseCommit.GetHash()
 					var err error
 					if baseCommit != "" {
 						err = self.c.Git().Rebase.RebaseBranchFromBaseCommit(baseBranch, baseCommit)
@@ -349,7 +577,9 @@ func (self *MergeAndRebaseHelper) RebaseOntoRef(ref string) error {
 					}
 					err = self.CheckMergeOrRebase(err)
 					if err == nil {
-						return self.ResetMarkedBaseCommit()
+						self.c.OnUIThread(func() error {
+							return self.ResetMarkedBaseCommit()
+						})
 					}
 					return err
 				})
@@ -362,7 +592,7 @@ func (self *MergeAndRebaseHelper) RebaseOntoRef(ref string) error {
 			self.c.Tr.RebasingFromBaseCommitTitle,
 			self.c.Tr.RebasingTitle),
 		map[string]string{
-			"checkedOutBranch": checkedOutBranchName,
+			"checkedOutBranch": self.checkedOutBranchNameForMessages(),
 		},
 	)
 
@@ -373,16 +603,13 @@ func (self *MergeAndRebaseHelper) RebaseOntoRef(ref string) error {
 }
 
 func (self *MergeAndRebaseHelper) MergeRefIntoCheckedOutBranch(refName string) error {
-	if self.c.Git().Branch.IsHeadDetached() {
-		return errors.New("Cannot merge branch in detached head state. You might have checked out a commit directly or a remote branch, in which case you should checkout the local branch you want to be on")
-	}
-	checkedOutBranchName := self.c.Model().Branches[0].Name
-	if checkedOutBranchName == refName {
+	if self.c.Model().Branches[0].Name == refName {
 		return errors.New(self.c.Tr.CantMergeBranchIntoItself)
 	}
+	checkedOutBranchName := self.checkedOutBranchNameForMessages()
 
 	wantFastForward, wantNonFastForward := self.fastForwardMergeUserPreference()
-	canFastForward := self.c.Git().Branch.CanDoFastForwardMerge(refName)
+	canFastForward := self.c.Git().Branch.IsAncestor("HEAD", refName)
 
 	var firstRegularMergeItem *types.MenuItem
 	var secondRegularMergeItem *types.MenuItem
@@ -392,7 +619,7 @@ func (self *MergeAndRebaseHelper) MergeRefIntoCheckedOutBranch(refName string) e
 		firstRegularMergeItem = &types.MenuItem{
 			Label:   self.c.Tr.RegularMergeFastForward,
 			OnPress: self.RegularMerge(refName, git_commands.MERGE_VARIANT_REGULAR),
-			Key:     'm',
+			Keys:    menuKey('m'),
 			Tooltip: utils.ResolvePlaceholderString(
 				self.c.Tr.RegularMergeFastForwardTooltip,
 				map[string]string{
@@ -406,7 +633,7 @@ func (self *MergeAndRebaseHelper) MergeRefIntoCheckedOutBranch(refName string) e
 		secondRegularMergeItem = &types.MenuItem{
 			Label:   self.c.Tr.RegularMergeNonFastForward,
 			OnPress: self.RegularMerge(refName, git_commands.MERGE_VARIANT_NON_FAST_FORWARD),
-			Key:     'n',
+			Keys:    menuKey('n'),
 			Tooltip: utils.ResolvePlaceholderString(
 				self.c.Tr.RegularMergeNonFastForwardTooltip,
 				map[string]string{
@@ -419,7 +646,7 @@ func (self *MergeAndRebaseHelper) MergeRefIntoCheckedOutBranch(refName string) e
 		firstRegularMergeItem = &types.MenuItem{
 			Label:   self.c.Tr.RegularMergeNonFastForward,
 			OnPress: self.RegularMerge(refName, git_commands.MERGE_VARIANT_REGULAR),
-			Key:     'm',
+			Keys:    menuKey('m'),
 			Tooltip: utils.ResolvePlaceholderString(
 				self.c.Tr.RegularMergeNonFastForwardTooltip,
 				map[string]string{
@@ -432,7 +659,7 @@ func (self *MergeAndRebaseHelper) MergeRefIntoCheckedOutBranch(refName string) e
 		secondRegularMergeItem = &types.MenuItem{
 			Label:   self.c.Tr.RegularMergeFastForward,
 			OnPress: self.RegularMerge(refName, git_commands.MERGE_VARIANT_FAST_FORWARD),
-			Key:     'f',
+			Keys:    menuKey('f'),
 			Tooltip: utils.ResolvePlaceholderString(
 				self.c.Tr.RegularMergeFastForwardTooltip,
 				map[string]string{
@@ -456,15 +683,24 @@ func (self *MergeAndRebaseHelper) MergeRefIntoCheckedOutBranch(refName string) e
 		}
 	}
 
+	// Git refuses to merge while there are staged changes, but not if it can
+	// fast-forward the squash merge. It would add the changes of the branch to
+	// the staged ones then, and we couldn't tell them apart anymore.
+	var squashMergeDisabledReason *types.DisabledReason
+	if AnyStagedFiles(self.c.Model().Files) {
+		squashMergeDisabledReason = &types.DisabledReason{Text: self.c.Tr.CantSquashMergeWithStagedChanges}
+	}
+
 	return self.c.Menu(types.CreateMenuOptions{
 		Title: self.c.Tr.Merge,
 		Items: []*types.MenuItem{
 			firstRegularMergeItem,
 			secondRegularMergeItem,
 			{
-				Label:   self.c.Tr.SquashMergeUncommitted,
-				OnPress: self.SquashMergeUncommitted(refName),
-				Key:     's',
+				Label:          self.c.Tr.SquashMergeUncommitted,
+				OnPress:        self.SquashMergeUncommitted(refName, checkedOutBranchName),
+				DisabledReason: squashMergeDisabledReason,
+				Keys:           menuKey('s'),
 				Tooltip: utils.ResolvePlaceholderString(
 					self.c.Tr.SquashMergeUncommittedTooltip,
 					map[string]string{
@@ -473,9 +709,10 @@ func (self *MergeAndRebaseHelper) MergeRefIntoCheckedOutBranch(refName string) e
 				),
 			},
 			{
-				Label:   self.c.Tr.SquashMergeCommitted,
-				OnPress: self.SquashMergeCommitted(refName, checkedOutBranchName),
-				Key:     'S',
+				Label:          self.c.Tr.SquashMergeCommitted,
+				OnPress:        self.SquashMergeCommitted(refName, checkedOutBranchName),
+				DisabledReason: squashMergeDisabledReason,
+				Keys:           menuKey('S'),
 				Tooltip: utils.ResolvePlaceholderString(
 					self.c.Tr.SquashMergeCommittedTooltip,
 					map[string]string{
@@ -491,37 +728,66 @@ func (self *MergeAndRebaseHelper) MergeRefIntoCheckedOutBranch(refName string) e
 func (self *MergeAndRebaseHelper) RegularMerge(refName string, variant git_commands.MergeVariant) func() error {
 	return func() error {
 		self.c.LogAction(self.c.Tr.Actions.Merge)
-		err := self.c.Git().Branch.Merge(refName, variant)
-		return self.CheckMergeOrRebase(err)
+		return self.c.WithWaitingStatus(self.c.Tr.MergingStatus, func(gocui.Task) error {
+			err := self.c.Git().Branch.Merge(refName, variant)
+			return self.CheckMergeOrRebaseAndSelectHeadCommit(err)
+		})
 	}
 }
 
-func (self *MergeAndRebaseHelper) SquashMergeUncommitted(refName string) func() error {
+func (self *MergeAndRebaseHelper) SquashMergeUncommitted(refName, checkedOutBranchName string) func() error {
 	return func() error {
 		self.c.LogAction(self.c.Tr.Actions.SquashMerge)
-		err := self.c.Git().Branch.Merge(refName, git_commands.MERGE_VARIANT_SQUASH)
-		return self.CheckMergeOrRebase(err)
+		return self.c.WithWaitingStatus(self.c.Tr.MergingStatus, func(gocui.Task) error {
+			err := self.c.Git().Branch.SquashMerge(refName, self.squashMergeMessage(refName, checkedOutBranchName))
+			err = self.CheckMergeOrRebase(err)
+
+			// The user asked us not to commit the changes, so don't offer to
+			// once they have resolved the conflicts
+			self.c.State().GetRepoState().SetMergeOrRebaseStartedInLazygit(false)
+
+			return err
+		})
 	}
 }
 
 func (self *MergeAndRebaseHelper) SquashMergeCommitted(refName, checkedOutBranchName string) func() error {
 	return func() error {
 		self.c.LogAction(self.c.Tr.Actions.SquashMerge)
-		err := self.c.Git().Branch.Merge(refName, git_commands.MERGE_VARIANT_SQUASH)
-		if err = self.CheckMergeOrRebase(err); err != nil {
-			return err
-		}
-		message := utils.ResolvePlaceholderString(self.c.UserConfig().Git.Merging.SquashMergeMessage, map[string]string{
-			"selectedRef":   refName,
-			"currentBranch": checkedOutBranchName,
+		return self.c.WithWaitingStatus(self.c.Tr.MergingStatus, func(gocui.Task) error {
+			err := self.c.Git().Branch.SquashMerge(refName, self.squashMergeMessage(refName, checkedOutBranchName))
+			if err == nil {
+				err = self.c.Git().Rebase.GenericMergeOrRebaseAction(models.WORKING_TREE_STATE_SQUASH_MERGING, REBASE_OPTION_CONTINUE)
+			}
+			return self.CheckMergeOrRebaseAndSelectHeadCommit(err)
 		})
-		err = self.c.Git().Commit.CommitCmdObj(message, "", false).Run()
-		if err != nil {
-			return err
-		}
-		self.c.Refresh(types.RefreshOptions{Mode: types.ASYNC})
-		return nil
 	}
+}
+
+// checkedOutBranchNameForMessages returns the name of the checked-out branch
+// for menu titles, tooltips and commit messages. If HEAD is detached, the Name
+// of the checked-out branch in the model is a commit hash, so we use a
+// different name. During a rebase, we use the name of the branch being
+// rebased. For any other detached HEAD, we use "HEAD", like git does in the
+// messages of merge commits.
+func (self *MergeAndRebaseHelper) checkedOutBranchNameForMessages() string {
+	checkedOutBranch := self.c.Model().Branches[0]
+	if !checkedOutBranch.DetachedHead {
+		return checkedOutBranch.Name
+	}
+
+	if branchName := self.c.Git().Status.NameOfBranchBeingRebased(); branchName != "" {
+		return branchName
+	}
+
+	return "HEAD"
+}
+
+func (self *MergeAndRebaseHelper) squashMergeMessage(refName, checkedOutBranchName string) string {
+	return utils.ResolvePlaceholderString(self.c.UserConfig().Git.Merging.SquashMergeMessage, map[string]string{
+		"selectedRef":   refName,
+		"currentBranch": checkedOutBranchName,
+	})
 }
 
 // Returns wantsFastForward, wantsNonFastForward. These will never both be true, but they can both be false.

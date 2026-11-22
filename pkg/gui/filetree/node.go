@@ -63,11 +63,66 @@ func (self *Node[T]) GetInternalPath() string {
 	return self.path
 }
 
-func (self *Node[T]) Sort() {
-	self.SortChildren()
+// This returns the logical paths of all the directories that this node stands
+// for, from the user's point of view like GetPath. For most nodes that's just
+// its own path. A compressed node (see CompressionLevel) also stands for the
+// directories that were squished into it, so for "a/b/c" with a
+// CompressionLevel of 2 this returns "a/b/c", "a/b" and "a".
+func (self *Node[T]) GetPaths() []string {
+	splitPath := split(self.path)
+	paths := make([]string, 0, self.CompressionLevel+1)
+	for i := 0; i <= self.CompressionLevel; i++ {
+		paths = append(paths, strings.TrimPrefix(join(splitPath[:len(splitPath)-i]), "./"))
+	}
+	return paths
+}
+
+func (self *Node[T]) Sort(cmp func(a, b *Node[T]) int) {
+	self.SortChildren(cmp)
 
 	for _, child := range self.Children {
-		child.Sort()
+		child.Sort(cmp)
+	}
+}
+
+// NodeSortComparator returns a comparator function for sorting tree nodes
+// based on the given sort order and case sensitivity.
+// sortOrder must be one of: "mixed", "filesFirst", "foldersFirst".
+func NodeSortComparator[T any](sortOrder string, caseSensitive bool) func(a, b *Node[T]) int {
+	strCmp := strings.Compare
+	if !caseSensitive {
+		strCmp = func(a, b string) int {
+			return strings.Compare(strings.ToLower(a), strings.ToLower(b))
+		}
+	}
+
+	// dirVsFileOrder is the return value when a is a directory and b is a file.
+	// -1 means directories come first, 1 means files come first.
+	dirVsFileOrder := 0
+	switch sortOrder {
+	case "foldersFirst":
+		dirVsFileOrder = -1
+	case "filesFirst":
+		dirVsFileOrder = 1
+	}
+
+	if dirVsFileOrder != 0 {
+		return func(a, b *Node[T]) int {
+			aIsDir := !a.IsFile()
+			bIsDir := !b.IsFile()
+			if aIsDir != bIsDir {
+				if aIsDir {
+					return dirVsFileOrder
+				}
+				return -dirVsFileOrder
+			}
+			return strCmp(a.path, b.path)
+		}
+	}
+
+	// "mixed": sort by path only
+	return func(a, b *Node[T]) int {
+		return strCmp(a.path, b.path)
 	}
 }
 
@@ -87,23 +142,14 @@ func (self *Node[T]) ForEachFile(cb func(*T) error) error {
 	return nil
 }
 
-func (self *Node[T]) SortChildren() {
+func (self *Node[T]) SortChildren(cmp func(a, b *Node[T]) int) {
 	if self.IsFile() {
 		return
 	}
 
 	children := slices.Clone(self.Children)
 
-	slices.SortFunc(children, func(a, b *Node[T]) int {
-		if !a.IsFile() && b.IsFile() {
-			return -1
-		}
-		if a.IsFile() && !b.IsFile() {
-			return 1
-		}
-
-		return strings.Compare(a.path, b.path)
-	})
+	slices.SortFunc(children, cmp)
 
 	// TODO: think about making this in-place
 	self.Children = children
@@ -324,12 +370,8 @@ func (self *Node[T]) GetPathsMatching(predicate func(*Node[T]) bool) []string {
 }
 
 func (self *Node[T]) GetFilePathsMatching(predicate func(*T) bool) []string {
-	matchingFileNodes := lo.Filter(self.GetLeaves(), func(node *Node[T], _ int) bool {
-		return predicate(node.File)
-	})
-
-	return lo.Map(matchingFileNodes, func(node *Node[T], _ int) string {
-		return node.GetPath()
+	return lo.FilterMap(self.GetLeaves(), func(node *Node[T], _ int) (string, bool) {
+		return node.GetPath(), predicate(node.File)
 	})
 }
 

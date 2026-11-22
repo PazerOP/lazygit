@@ -13,16 +13,18 @@ var CustomCommandsInPerRepoConfig = NewIntegrationTest(NewIntegrationTestArgs{
 	Skip:         false,
 	SetupConfig: func(cfg *config.AppConfig) {
 		otherRepo, _ := filepath.Abs("../other")
-		cfg.GetAppState().RecentRepos = []string{otherRepo}
+		_ = cfg.UpdateAppState(func(state *config.AppState) {
+			state.RecentRepos = []string{otherRepo}
+		})
 
 		cfg.GetUserConfig().CustomCommands = []config.CustomCommand{
 			{
-				Key:     "X",
+				Key:     config.Keybinding{"X"},
 				Context: "global",
 				Command: "printf 'global X' > file.txt",
 			},
 			{
-				Key:     "Y",
+				Key:     config.Keybinding{"Y"},
 				Context: "global",
 				Command: "printf 'global Y' > file.txt",
 			},
@@ -48,13 +50,13 @@ customCommands:
 			).Confirm()
 		t.Views().Status().Content(Contains("other → master"))
 
-		t.GlobalPress("X")
+		t.GlobalPress(config.Keybinding{"X"})
 		t.FileSystem().FileContent("../other/file.txt", Equals("global X"))
 
-		t.GlobalPress("Y")
+		t.GlobalPress(config.Keybinding{"Y"})
 		t.FileSystem().FileContent("../other/file.txt", Equals("local Y"))
 
-		t.GlobalPress("Z")
+		t.GlobalPress(config.Keybinding{"Z"})
 		t.FileSystem().FileContent("../other/file.txt", Equals("local Z"))
 	},
 })

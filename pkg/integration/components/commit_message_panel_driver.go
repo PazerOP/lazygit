@@ -33,6 +33,14 @@ func (self *CommitMessagePanelDriver) Type(value string) *CommitMessagePanelDriv
 	return self
 }
 
+// Paste the text the way a terminal does it, as opposed to pasting it with the
+// commit menu
+func (self *CommitMessagePanelDriver) Paste(text string) *CommitMessagePanelDriver {
+	self.t.paste(text)
+
+	return self
+}
+
 func (self *CommitMessagePanelDriver) SwitchToDescription() *CommitDescriptionPanelDriver {
 	self.getViewDriver().PressTab()
 	return &CommitDescriptionPanelDriver{t: self.t}
@@ -73,6 +81,6 @@ func (self *CommitMessagePanelDriver) SelectNextMessage() *CommitMessagePanelDri
 }
 
 func (self *CommitMessagePanelDriver) OpenCommitMenu() *CommitMessagePanelDriver {
-	self.t.press(self.t.keys.CommitMessage.CommitMenu)
+	self.t.press(self.t.keys.CommitMessage.CommitMenu[0])
 	return self
 }

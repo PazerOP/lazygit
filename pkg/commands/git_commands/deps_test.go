@@ -4,7 +4,6 @@ import (
 	"os"
 
 	"github.com/go-errors/errors"
-	gogit "github.com/jesseduffield/go-git/v5"
 	"github.com/jesseduffield/lazygit/pkg/commands/git_config"
 	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
 	"github.com/jesseduffield/lazygit/pkg/common"
@@ -15,11 +14,12 @@ import (
 type commonDeps struct {
 	runner     *oscommands.FakeCmdObjRunner
 	userConfig *config.UserConfig
-	appState   *config.AppState
 	gitVersion *GitVersion
 	gitConfig  *git_config.FakeGitConfig
 	getenv     func(string) string
 	removeFile func(string) error
+	isDirEmpty func(string) (bool, error)
+	removeDir  func(string) error
 	common     *common.Common
 	cmd        *oscommands.CmdObjBuilder
 	fs         afero.Fs
@@ -31,7 +31,7 @@ func buildGitCommon(deps commonDeps) *GitCommon {
 
 	gitCommon.Common = deps.common
 	if gitCommon.Common == nil {
-		gitCommon.Common = common.NewDummyCommonWithUserConfigAndAppState(deps.userConfig, deps.appState)
+		gitCommon.Common = common.NewDummyCommonWithUserConfig(deps.userConfig)
 	}
 
 	if deps.fs != nil {
@@ -61,7 +61,7 @@ func buildGitCommon(deps commonDeps) *GitCommon {
 		gitCommon.Common.SetUserConfig(config.GetDefaultConfig())
 	}
 
-	gitCommon.pagerConfig = config.NewPagerConfig(func() *config.UserConfig {
+	gitCommon.diffRendererConfigManager = config.NewDiffRendererConfigManager(func() *config.UserConfig {
 		return gitCommon.Common.UserConfig()
 	})
 
@@ -75,8 +75,7 @@ func buildGitCommon(deps commonDeps) *GitCommon {
 		gitConfig = git_config.NewFakeGitConfig(nil)
 	}
 
-	gitCommon.repo = buildRepo()
-	gitCommon.config = NewConfigCommands(gitCommon.Common, gitConfig, gitCommon.repo)
+	gitCommon.config = NewConfigCommands(gitCommon.Common, gitConfig)
 
 	getenv := deps.getenv
 	if getenv == nil {
@@ -88,21 +87,27 @@ func buildGitCommon(deps commonDeps) *GitCommon {
 		removeFile = func(string) error { return errors.New("unexpected call to removeFile") }
 	}
 
+	isDirEmpty := deps.isDirEmpty
+	if isDirEmpty == nil {
+		isDirEmpty = func(string) (bool, error) { return false, nil }
+	}
+
+	removeDir := deps.removeDir
+	if removeDir == nil {
+		removeDir = func(string) error { return errors.New("unexpected call to removeDir") }
+	}
+
 	gitCommon.os = oscommands.NewDummyOSCommandWithDeps(oscommands.OSCommandDeps{
 		Common:       gitCommon.Common,
 		GetenvFn:     getenv,
 		Cmd:          cmd,
 		RemoveFileFn: removeFile,
+		IsDirEmptyFn: isDirEmpty,
+		RemoveDirFn:  removeDir,
 		TempDir:      os.TempDir(),
 	})
 
 	return gitCommon
-}
-
-func buildRepo() *gogit.Repository {
-	// TODO: think of a way to actually mock this out
-	var repo *gogit.Repository
-	return repo
 }
 
 func buildFileLoader(gitCommon *GitCommon) *FileLoader {
@@ -160,6 +165,12 @@ func buildBranchCommands(deps commonDeps) *BranchCommands {
 	gitCommon := buildGitCommon(deps)
 
 	return NewBranchCommands(gitCommon)
+}
+
+func buildStatusCommands(deps commonDeps) *StatusCommands {
+	gitCommon := buildGitCommon(deps)
+
+	return NewStatusCommands(gitCommon)
 }
 
 func buildFlowCommands(deps commonDeps) *FlowCommands {

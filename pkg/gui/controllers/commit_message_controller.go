@@ -3,10 +3,9 @@ package controllers
 import (
 	"errors"
 
-	"github.com/jesseduffield/gocui"
 	"github.com/jesseduffield/lazygit/pkg/commands/git_commands"
+	"github.com/jesseduffield/lazygit/pkg/gocui"
 	"github.com/jesseduffield/lazygit/pkg/gui/context"
-	"github.com/jesseduffield/lazygit/pkg/gui/controllers/helpers"
 	"github.com/jesseduffield/lazygit/pkg/gui/types"
 )
 
@@ -29,29 +28,29 @@ func NewCommitMessageController(
 func (self *CommitMessageController) GetKeybindings(opts types.KeybindingsOpts) []*types.Binding {
 	bindings := []*types.Binding{
 		{
-			Key:         opts.GetKey(opts.Config.Universal.SubmitEditorText),
+			Keys:        opts.GetKeys(opts.Config.Universal.SubmitEditorText),
 			Handler:     self.confirm,
 			Description: self.c.Tr.Confirm,
 		},
 		{
-			Key:         opts.GetKey(opts.Config.Universal.Return),
+			Keys:        opts.GetKeys(opts.Config.Universal.Return),
 			Handler:     self.close,
 			Description: self.c.Tr.Close,
 		},
 		{
-			Key:     opts.GetKey(opts.Config.Universal.PrevItem),
+			Keys:    opts.GetKeys(opts.Config.Universal.PrevItem),
 			Handler: self.handlePreviousCommit,
 		},
 		{
-			Key:     opts.GetKey(opts.Config.Universal.NextItem),
+			Keys:    opts.GetKeys(opts.Config.Universal.NextItem),
 			Handler: self.handleNextCommit,
 		},
 		{
-			Key:     opts.GetKey(opts.Config.Universal.TogglePanel),
-			Handler: self.handleTogglePanel,
+			Keys:    opts.GetKeys(opts.Config.Universal.TogglePanel),
+			Handler: self.switchToCommitDescription,
 		},
 		{
-			Key:     opts.GetKey(opts.Config.CommitMessage.CommitMenu),
+			Keys:    opts.GetKeys(opts.Config.CommitMessage.CommitMenu),
 			Handler: self.openCommitMenu,
 		},
 	}
@@ -82,6 +81,12 @@ func (self *CommitMessageController) GetOnFocusLost() func(types.OnFocusLostOpts
 	}
 }
 
+func (self *CommitMessageController) GetOnQuit() func() {
+	return func() {
+		self.c.Helpers().Commits.PreserveCommitMessage()
+	}
+}
+
 func (self *CommitMessageController) Context() types.Context {
 	return self.context()
 }
@@ -106,38 +111,12 @@ func (self *CommitMessageController) switchToCommitDescription() error {
 	return nil
 }
 
-func (self *CommitMessageController) handleTogglePanel() error {
-	// The default keybinding for this action is "<tab>", which means that we
-	// also get here when pasting multi-line text that contains tabs. In that
-	// case we don't want to toggle the panel, but insert the tab as a character
-	// (somehow, see below).
-	//
-	// Only do this if the TogglePanel command is actually mapped to "<tab>"
-	// (the default). If it's not, we can only hope that it's mapped to some
-	// ctrl key or fn key, which is unlikely to occur in pasted text. And if
-	// they mapped some *other* command to "<tab>", then we're totally out of
-	// luck.
-	if self.c.GocuiGui().IsPasting && self.c.UserConfig().Keybinding.Universal.TogglePanel == "<tab>" {
-		// It is unlikely that a pasted commit message contains a tab in the
-		// subject line, so it shouldn't matter too much how we handle it.
-		// Simply insert 4 spaces instead; all that matters is that we don't
-		// switch to the description panel.
-		view := self.context().GetView()
-		for range 4 {
-			view.Editor.Edit(view, gocui.KeySpace, ' ', 0)
-		}
-		return nil
-	}
-
-	return self.switchToCommitDescription()
-}
-
 func (self *CommitMessageController) handleCommitIndexChange(value int) error {
 	currentIndex := self.context().GetSelectedIndex()
 	newIndex := currentIndex + value
 	if newIndex == context.NoCommitIndex {
 		self.context().SetSelectedIndex(newIndex)
-		self.c.Helpers().Commits.SetMessageAndDescriptionInView(self.context().GetHistoryMessage())
+		self.c.Helpers().Commits.SetPreservedMessageInView(self.context().GetHistoryMessage())
 		return nil
 	} else if currentIndex == context.NoCommitIndex {
 		self.context().SetHistoryMessage(self.c.Helpers().Commits.JoinCommitMessageAndUnwrappedDescription())
@@ -159,28 +138,12 @@ func (self *CommitMessageController) setCommitMessageAtIndex(index int) (bool, e
 		}
 		return false, errors.New(self.c.Tr.CommitWithoutMessageErr)
 	}
-	if self.c.UserConfig().Git.Commit.AutoWrapCommitMessage {
-		commitMessage = helpers.TryRemoveHardLineBreaks(commitMessage, self.c.UserConfig().Git.Commit.AutoWrapWidth)
-	}
-	self.c.Helpers().Commits.UpdateCommitPanelView(commitMessage)
+	commitMessage = self.c.Helpers().Commits.TryRemoveHardLineBreaksIfAutoWrapping(commitMessage)
+	self.c.Helpers().Commits.SetMessageAndDescriptionInView(commitMessage)
 	return true, nil
 }
 
 func (self *CommitMessageController) confirm() error {
-	// The default keybinding for this action is "<enter>", which means that we
-	// also get here when pasting multi-line text that contains newlines. In
-	// that case we don't want to confirm the commit, but switch to the
-	// description panel instead so that the rest of the pasted text goes there.
-	//
-	// Only do this if the SubmitEditorText command is actually mapped to
-	// "<enter>" (the default). If it's not, we can only hope that it's mapped
-	// to some ctrl key or fn key, which is unlikely to occur in pasted text.
-	// And if they mapped some *other* command to "<enter>", then we're totally
-	// out of luck.
-	if self.c.GocuiGui().IsPasting && self.c.UserConfig().Keybinding.Universal.SubmitEditorText == "<enter>" {
-		return self.switchToCommitDescription()
-	}
-
 	return self.c.Helpers().Commits.HandleCommitConfirm()
 }
 

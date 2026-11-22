@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gookit/color"
 	"github.com/jesseduffield/lazygit/pkg/commands/git_commands"
 	"github.com/jesseduffield/lazygit/pkg/commands/models"
 	"github.com/jesseduffield/lazygit/pkg/config"
@@ -18,16 +19,19 @@ import (
 	"github.com/samber/lo"
 )
 
-type colorMatcher struct {
-	patterns map[string]*style.TextStyle
-	isRegex  bool // NOTE: this value is needed only until the deprecated branchColors config is removed and only regex color patterns are used
+type branchColorPattern struct {
+	pattern string
+	style   style.TextStyle
 }
 
-var colorPatterns *colorMatcher
+var branchColorPatterns []branchColorPattern
+
+var dimYellow = style.FgYellow.SetDim()
 
 func GetBranchListDisplayStrings(
 	branches []*models.Branch,
 	getItemOperation func(item types.HasUrn) types.ItemOperation,
+	prs map[string]*models.GithubPullRequest,
 	fullDescription bool,
 	diffName string,
 	viewWidth int,
@@ -37,7 +41,7 @@ func GetBranchListDisplayStrings(
 ) [][]string {
 	return lo.Map(branches, func(branch *models.Branch, _ int) []string {
 		diffed := branch.Name == diffName
-		return getBranchDisplayStrings(branch, getItemOperation(branch), fullDescription, diffed, viewWidth, tr, userConfig, worktrees, time.Now())
+		return getBranchDisplayStrings(branch, getItemOperation(branch), fullDescription, diffed, viewWidth, tr, userConfig, worktrees, time.Now(), prs)
 	})
 }
 
@@ -52,6 +56,7 @@ func getBranchDisplayStrings(
 	userConfig *config.UserConfig,
 	worktrees []*models.Worktree,
 	now time.Time,
+	prs map[string]*models.GithubPullRequest,
 ) []string {
 	checkedOutByWorkTree := git_commands.CheckedOutByOtherWorktree(b, worktrees)
 	showCommitHash := fullDescription || userConfig.Gui.ShowBranchCommitHash
@@ -63,11 +68,12 @@ func getBranchDisplayStrings(
 	if len(divergence) > 0 {
 		availableWidth -= utils.StringWidth(divergence) + 1
 	}
-	if icons.IsIconEnabled() {
-		availableWidth -= 2 // one for the icon, one for the space
-	}
 	if showCommitHash {
 		availableWidth -= utils.COMMIT_HASH_SHORT_SIZE + 1
+	}
+	if len(prs) > 0 {
+		// if we have PRs then we assume that at least one branch in the list has one
+		availableWidth -= 2
 	}
 	paddingNeededForDivergence := availableWidth
 
@@ -136,12 +142,28 @@ func getBranchDisplayStrings(
 	res := make([]string, 0, 6)
 	res = append(res, recencyColor.Sprint(b.Recency))
 
-	if icons.IsIconEnabled() {
-		res = append(res, nameTextStyle.Sprint(icons.IconForBranch(b)))
+	var coloredPrIcon string
+	pr, hasPr := prs[b.Name]
+	if hasPr && ShouldShowPrForBranch(pr, b.Name, userConfig) {
+		var prIcon string
+		if icons.IsIconEnabled() {
+			prIcon = icons.IconForRemoteUrl(pr.Url)
+		} else {
+			prIcon = "●"
+		}
+		coloredPrIcon = WithPrColor(pr.State, prIcon, false)
+		if pr.State == "OPEN" {
+			icon, _, textStyle := checksStatePresentation(pr.ChecksState, tr)
+			if icon != "" {
+				coloredPrIcon = textStyle.Sprint(icon)
+			}
+		}
 	}
+	res = append(res, coloredPrIcon)
 
 	if showCommitHash {
-		res = append(res, utils.ShortHash(b.CommitHash))
+		// The CommitHash of a detached HEAD is empty, but its Name is the hash
+		res = append(res, utils.ShortHash(lo.Ternary(b.DetachedHead, b.Name, b.CommitHash)))
 	}
 
 	if divergence != "" {
@@ -174,29 +196,13 @@ func getBranchDisplayStrings(
 
 // GetBranchTextStyle branch color
 func GetBranchTextStyle(name string) style.TextStyle {
-	if style, ok := colorPatterns.match(name); ok {
-		return *style
+	for _, p := range branchColorPatterns {
+		if matched, _ := regexp.MatchString(p.pattern, name); matched {
+			return p.style
+		}
 	}
 
 	return theme.DefaultTextColor
-}
-
-func (m *colorMatcher) match(name string) (*style.TextStyle, bool) {
-	if m.isRegex {
-		for pattern, style := range m.patterns {
-			if matched, _ := regexp.MatchString(pattern, name); matched {
-				return style, true
-			}
-		}
-	} else {
-		// old behavior using the deprecated branchColors behavior matching on branch type
-		branchType := strings.Split(name, "/")[0]
-		if value, ok := m.patterns[branchType]; ok {
-			return value, true
-		}
-	}
-
-	return nil, false
 }
 
 func BranchStatus(
@@ -220,7 +226,12 @@ func BranchStatus(
 		} else if branch.RemoteBranchNotStoredLocally() {
 			result = style.FgMagenta.Sprint("?")
 		} else if branch.IsBehindForPull() && branch.IsAheadForPull() {
-			result = style.FgYellow.Sprintf("↓%s↑%s", branch.BehindForPull, branch.AheadForPull)
+			// A branch that diverged only because its upstream was rewritten
+			// has no commits of its own, and fast-forwarding it resolves the
+			// divergence. Dim it to set it apart from a branch whose
+			// divergence needs a decision.
+			divergenceStyle := lo.Ternary(branch.UpstreamRewritten.Load(), dimYellow, style.FgYellow)
+			result = divergenceStyle.Sprintf("↓%s↑%s", branch.BehindForPull, branch.AheadForPull)
 		} else if branch.IsBehindForPull() {
 			result = style.FgYellow.Sprintf("↓%s", branch.BehindForPull)
 		} else if branch.IsAheadForPull() {
@@ -252,9 +263,106 @@ func divergenceStr(
 	return result
 }
 
-func SetCustomBranches(customBranchColors map[string]string, isRegex bool) {
-	colorPatterns = &colorMatcher{
-		patterns: utils.SetCustomColors(customBranchColors),
-		isRegex:  isRegex,
+func SetCustomBranches(patterns config.ColorPatterns) {
+	branchColorPatterns = lo.Map(patterns, func(p config.ColorPattern, _ int) branchColorPattern {
+		return branchColorPattern{pattern: p.Pattern, style: utils.CustomColorStyle(p.Color)}
+	})
+}
+
+func WithPrColor(state string, text string, isBg bool) string {
+	switch state {
+	case "OPEN":
+		return color.RGB(0x43, 0x84, 0x40, isBg).Sprint(text)
+	case "CLOSED":
+		return color.RGB(0xC9, 0x45, 0x3C, isBg).Sprint(text)
+	case "MERGED":
+		return color.RGB(0x82, 0x59, 0xDD, isBg).Sprint(text)
+	case "DRAFT":
+		return color.RGB(0x67, 0x6C, 0x75, isBg).Sprint(text)
+	default:
+		return lo.Ternary(isBg, style.BgDefault, style.FgDefault).Sprint(text)
 	}
+}
+
+func FormatPullRequestHeader(pr *models.GithubPullRequest, tr *i18n.TranslationSet) string {
+	icon := lo.Ternary(icons.IsIconEnabled(), icons.IconForRemoteUrl(pr.Url)+"  ", "")
+	stateText := coloredPullRequestStateText(pr.State)
+	checksStateText := coloredChecksStateText(pr.ChecksState, tr)
+	numberText := style.FgCyan.Sprintf("#%d", pr.Number)
+
+	// The checks status links to the checks tab, so it needs to be its own
+	// hyperlink separate from the rest of the header.
+	parts := []string{style.PrintHyperlink(icon+stateText, pr.Url)}
+	if checksStateText != "" {
+		parts = append(parts, style.PrintHyperlink(checksStateText, strings.TrimSuffix(pr.Url, "/")+"/checks"))
+	}
+	parts = append(parts, style.PrintHyperlink(fmt.Sprintf("%s  %s\n", pr.Title, numberText), pr.Url))
+
+	return strings.Join(parts, "  ")
+}
+
+func pullRequestStateText(state string) string {
+	var icon, label string
+	switch state {
+	case "OPEN":
+		icon, label = " ", "Open"
+	case "CLOSED":
+		icon, label = " ", "Closed"
+	case "MERGED":
+		icon, label = " ", "Merged"
+	case "DRAFT":
+		icon, label = " ", "Draft"
+	default:
+		return ""
+	}
+	if icons.IsIconEnabled() {
+		return icon + label
+	}
+	return label
+}
+
+func coloredPullRequestStateText(state string) string {
+	if icons.IsIconEnabled() {
+		return fmt.Sprintf("%s%s%s",
+			WithPrColor(state, "", false),
+			WithPrColor(state, color.RGB(0xFF, 0xFF, 0xFF, false).Sprint(pullRequestStateText(state)), true),
+			WithPrColor(state, "", false))
+	}
+
+	return WithPrColor(state, pullRequestStateText(state), false)
+}
+
+func checksStatePresentation(state string, tr *i18n.TranslationSet) (string, string, style.TextStyle) {
+	switch state {
+	case "SUCCESS":
+		return "✓", tr.PullRequestChecksPassing, style.FgGreen
+	case "PENDING":
+		return "●", tr.PullRequestChecksPending, style.FgYellow
+	case "FAILURE":
+		return "✗", tr.PullRequestChecksFailing, style.FgRed
+	case "ERROR":
+		return "!", tr.PullRequestChecksError, style.FgRed
+	case "EXPECTED":
+		return "○", tr.PullRequestChecksExpected, style.FgDefault
+	default:
+		return "", "", style.Nothing
+	}
+}
+
+func coloredChecksStateText(state string, tr *i18n.TranslationSet) string {
+	icon, text, textStyle := checksStatePresentation(state, tr)
+	if text != "" {
+		return textStyle.Sprintf("%s %s", icon, text)
+	}
+	return ""
+}
+
+func ShouldShowPrForBranch(pr *models.GithubPullRequest, branchName string, userConfig *config.UserConfig) bool {
+	if !lo.Contains(userConfig.Git.MainBranches, branchName) {
+		return true
+	}
+
+	// For main branches we only want to show the PR if it's open (or draft), on the assumption that a
+	// closed PR for a main branch is always a mistake.
+	return pr.State != "CLOSED" && pr.State != "MERGED"
 }

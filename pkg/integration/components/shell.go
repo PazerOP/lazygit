@@ -77,7 +77,7 @@ func (self *Shell) RunShellCommand(cmdStr string) *Shell {
 	}
 
 	cmd := exec.Command(shell, shellArg, cmdStr)
-	cmd.Env = os.Environ()
+	cmd.Env = self.env
 	cmd.Dir = self.dir
 
 	output, err := cmd.CombinedOutput()
@@ -256,7 +256,7 @@ func (self *Shell) CreateNCommitsStartingAt(n, startIndex int) *Shell {
 			fmt.Sprintf("file%02d.txt", i),
 			fmt.Sprintf("file%02d content", i),
 		).
-			Commit(fmt.Sprintf("commit %02d", i))
+			Commit(fmt.Sprintf("commit-%02d", i))
 	}
 
 	return self
@@ -414,8 +414,8 @@ func (self *Shell) Stash(message string) *Shell {
 	return self
 }
 
-func (self *Shell) StartBisect(good string, bad string) *Shell {
-	self.RunCommand([]string{"git", "bisect", "start", good, bad})
+func (self *Shell) StartBisect(bad string, good string) *Shell {
+	self.RunCommand([]string{"git", "bisect", "start", bad, good})
 	return self
 }
 

@@ -1,11 +1,9 @@
 package types
 
 import (
-	"github.com/jesseduffield/gocui"
+	"github.com/jesseduffield/lazygit/pkg/gocui"
 	"github.com/jesseduffield/lazygit/pkg/gui/style"
 )
-
-type Key any // FIXME: find out how to get `gocui.Key | rune`
 
 // Binding - a keybinding mapping a key and modifier to a handler. The keypress
 // is only handled if the given view has focus, or handled globally if the view
@@ -13,8 +11,7 @@ type Key any // FIXME: find out how to get `gocui.Key | rune`
 type Binding struct {
 	ViewName    string
 	Handler     func() error
-	Key         Key
-	Modifier    gocui.Modifier
+	Keys        []gocui.Key
 	Description string
 	// DescriptionFunc is used instead of Description if non-nil, and is useful for dynamic
 	// descriptions that change depending on context. Important: this must not be an expensive call.
@@ -42,6 +39,11 @@ type Binding struct {
 
 	// to be displayed if the keybinding is highlighted from within a menu
 	Tooltip string
+	// TooltipFunc is used instead of Tooltip if non-nil, for a command whose tooltip
+	// depends on context, as DescriptionFunc is for its description — and with the
+	// same two conditions: it must not be an expensive call, and a generic Tooltip
+	// must still be given, since that is the one the cheatsheet prints.
+	TooltipFunc func() string
 
 	// Function to decide whether the command is enabled, and why. If this
 	// returns an empty string, it is; if it returns a non-empty string, it is
@@ -60,6 +62,13 @@ func (b *Binding) GetDescription() string {
 		return b.DescriptionFunc()
 	}
 	return b.Description
+}
+
+func (b *Binding) GetTooltip() string {
+	if b.TooltipFunc != nil {
+		return b.TooltipFunc()
+	}
+	return b.Tooltip
 }
 
 func (b *Binding) GetShortDescription() string {

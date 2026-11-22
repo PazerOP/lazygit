@@ -8,9 +8,10 @@ func AttachControllers(context types.Context, controllers ...types.IController) 
 		context.AddMouseKeybindingsFn(controller.GetMouseKeybindings)
 		context.AddOnDoubleClickFn(controller.GetOnDoubleClick())
 		context.AddOnClickFn(controller.GetOnClick())
-		context.AddOnClickFocusedMainViewFn(controller.GetOnClickFocusedMainView())
+		context.AddFocusedMainViewDiffSource(controller.GetFocusedMainViewDiffSource())
 		context.AddOnRenderToMainFn(controller.GetOnRenderToMain())
 		context.AddOnFocusFn(controller.GetOnFocus())
 		context.AddOnFocusLostFn(controller.GetOnFocusLost())
+		context.AddOnQuitFn(controller.GetOnQuit())
 	}
 }

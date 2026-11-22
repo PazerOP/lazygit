@@ -13,6 +13,7 @@ import (
 	"github.com/jesseduffield/lazygit/pkg/gui/context"
 	"github.com/jesseduffield/lazygit/pkg/gui/style"
 	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/jesseduffield/lazygit/pkg/utils"
 	"github.com/samber/lo"
 )
 
@@ -97,6 +98,12 @@ func IsWorkingTreeDirtyExceptSubmodules(files []*models.File, submoduleConfigs [
 	return AnyStagedFilesExceptSubmodules(files, submoduleConfigs) || AnyTrackedFilesExceptSubmodules(files, submoduleConfigs)
 }
 
+func GetUnstagedFilesExceptSubmodules(files []*models.File, submoduleConfigs []*models.SubmoduleConfig) []string {
+	return lo.FilterMap(files, func(f *models.File, _ int) (string, bool) {
+		return f.Path, f.HasUnstagedChanges && f.Tracked && !f.IsSubmodule(submoduleConfigs)
+	})
+}
+
 func (self *WorkingTreeHelper) FileForSubmodule(submodule *models.SubmoduleConfig) *models.File {
 	for _, file := range self.c.Model().Files {
 		if file.IsSubmodule([]*models.SubmoduleConfig{submodule}) {
@@ -105,6 +112,39 @@ func (self *WorkingTreeHelper) FileForSubmodule(submodule *models.SubmoduleConfi
 	}
 
 	return nil
+}
+
+// WorktreeForFile returns the worktree that an entry of the files panel is, if
+// it is one
+func (self *WorkingTreeHelper) WorktreeForFile(file *models.File) (*models.Worktree, bool) {
+	return worktreeOfFile(file, self.c.Model().Worktrees, self.c.Git().RepoPaths.WorktreePath())
+}
+
+// NestedRepositoryPlaceholders returns the placeholders for the texts that
+// tell you what to do about a nested repository
+func (self *WorkingTreeHelper) NestedRepositoryPlaceholders(file *models.File) map[string]string {
+	keybindings := self.c.UserConfig().Keybinding
+	return map[string]string{
+		"path":       file.Path,
+		"discardKey": keybindings.Universal.Remove.String(),
+		"removeKey":  keybindings.Universal.Remove.String(),
+		"ignoreKey":  keybindings.Files.IgnoreFile.String(),
+	}
+}
+
+// CantStageNestedRepository returns why the given nested repository can't be
+// staged. git add records a nested repository as an embedded repository: a
+// gitlink without an entry in .gitmodules. Nobody wants that, so we don't let
+// you stage one, and say how to get rid of it instead.
+func (self *WorkingTreeHelper) CantStageNestedRepository(file *models.File) *types.DisabledReason {
+	text := self.c.Tr.StageNestedRepositoryDisabled
+	if file.IsWorktree {
+		text = self.c.Tr.StageWorktreeDisabled
+	}
+
+	return &types.DisabledReason{
+		Text: utils.ResolvePlaceholderString(text, self.NestedRepositoryPlaceholders(file)),
+	}
 }
 
 func (self *WorkingTreeHelper) OpenMergeTool() error {
@@ -141,11 +181,16 @@ func (self *WorkingTreeHelper) HandleCommitPressWithMessage(initialMessage strin
 func (self *WorkingTreeHelper) handleCommit(summary string, description string, forceSkipHooks bool) error {
 	cmdObj := self.c.Git().Commit.CommitCmdObj(summary, description, forceSkipHooks)
 	self.c.LogAction(self.c.Tr.Actions.Commit)
-	return self.gpgHelper.WithGpgHandling(cmdObj, git_commands.CommitGpgSign, self.c.Tr.CommittingStatus,
+	return self.gpgHelper.WithGpgHandlingAndSelectHeadCommit(cmdObj, git_commands.CommitGpgSign, self.c.Tr.CommittingStatus,
 		func() error {
-			self.commitsHelper.ClearPreservedCommitMessage()
+			// This runs on a worker when the commit output is streamed, so
+			// bounce the preserved-message write to the UI thread.
+			self.c.OnUIThread(func() error {
+				self.commitsHelper.ClearPreservedCommitMessage()
+				return nil
+			})
 			return nil
-		}, nil)
+		})
 }
 
 func (self *WorkingTreeHelper) switchFromCommitMessagePanelToEditor(filepath string, forceSkipHooks bool) error {
@@ -189,9 +234,12 @@ func (self *WorkingTreeHelper) HandleWIPCommitPress() error {
 }
 
 func (self *WorkingTreeHelper) HandleCommitPress() error {
-	message := self.c.Contexts().CommitMessage.GetPreservedMessageAndLogError()
-
-	if message == "" {
+	var initialMessage string
+	preservedMessage := self.c.Contexts().CommitMessage.GetPreservedMessageAndLogError()
+	if preservedMessage == "" {
+		initialMessage = self.c.Git().Status.SquashMergeMessage()
+	}
+	if preservedMessage == "" && initialMessage == "" {
 		commitPrefixConfigs := self.commitPrefixConfigsForRepo()
 		for _, commitPrefixConfig := range commitPrefixConfigs {
 			prefixPattern := commitPrefixConfig.Pattern
@@ -206,30 +254,45 @@ func (self *WorkingTreeHelper) HandleCommitPress() error {
 			}
 
 			if rgx.MatchString(branchName) {
-				prefix := rgx.ReplaceAllString(branchName, prefixReplace)
-				message = prefix
+				initialMessage = rgx.ReplaceAllString(branchName, prefixReplace)
 				break
 			}
 		}
 	}
 
-	return self.HandleCommitPressWithMessage(message, false)
+	return self.HandleCommitPressWithMessage(initialMessage, false)
 }
 
 func (self *WorkingTreeHelper) WithEnsureCommittableFiles(handler func() error) error {
-	if err := self.prepareFilesForCommit(); err != nil {
-		return err
-	}
-
 	if len(self.c.Model().Files) == 0 {
 		return errors.New(self.c.Tr.NoFilesStagedTitle)
 	}
 
 	if !self.AnyStagedFiles() {
+		if nestedRepository, ok := lo.Find(self.c.Model().Files, (*models.File).IsNestedRepository); ok {
+			return errors.New(self.CantStageNestedRepository(nestedRepository).Text)
+		}
+
+		if self.c.UserConfig().Gui.SkipNoStagedFilesWarning {
+			return self.stageAllAndThen(handler)
+		}
+
 		return self.promptToStageAllAndRetry(handler)
 	}
 
 	return handler()
+}
+
+func (self *WorkingTreeHelper) stageAllAndThen(then func() error) error {
+	self.c.LogAction(self.c.Tr.Actions.StageAllFiles)
+	if err := self.c.Git().WorkingTree.StageAll(false); err != nil {
+		return err
+	}
+	self.c.Refresh(types.RefreshOptions{
+		Scope: []types.RefreshableView{types.FILES},
+		Then:  then,
+	})
+	return nil
 }
 
 func (self *WorkingTreeHelper) promptToStageAllAndRetry(retry func() error) error {
@@ -237,35 +300,9 @@ func (self *WorkingTreeHelper) promptToStageAllAndRetry(retry func() error) erro
 		Title:  self.c.Tr.NoFilesStagedTitle,
 		Prompt: self.c.Tr.NoFilesStagedPrompt,
 		HandleConfirm: func() error {
-			self.c.LogAction(self.c.Tr.Actions.StageAllFiles)
-			if err := self.c.Git().WorkingTree.StageAll(false); err != nil {
-				return err
-			}
-			self.syncRefresh()
-
-			return retry()
+			return self.stageAllAndThen(retry)
 		},
 	})
-
-	return nil
-}
-
-// for when you need to refetch files before continuing an action. Runs synchronously.
-func (self *WorkingTreeHelper) syncRefresh() {
-	self.c.Refresh(types.RefreshOptions{Mode: types.SYNC, Scope: []types.RefreshableView{types.FILES}})
-}
-
-func (self *WorkingTreeHelper) prepareFilesForCommit() error {
-	noStagedFiles := !self.AnyStagedFiles()
-	if noStagedFiles && self.c.UserConfig().Gui.SkipNoStagedFilesWarning {
-		self.c.LogAction(self.c.Tr.Actions.StageAllFiles)
-		err := self.c.Git().WorkingTree.StageAll(false)
-		if err != nil {
-			return err
-		}
-
-		self.syncRefresh()
-	}
 
 	return nil
 }
@@ -361,7 +398,7 @@ func (self *WorkingTreeHelper) CreateMergeConflictMenu(selectedFilepaths []strin
 		}
 
 		err := self.c.Git().WorkingTree.StageFiles(selectedFilepaths, nil)
-		self.c.Refresh(types.RefreshOptions{Mode: types.SYNC, Scope: []types.RefreshableView{types.FILES}})
+		self.c.Refresh(types.RefreshOptions{Scope: []types.RefreshableView{types.FILES}})
 		return err
 	}
 
@@ -377,7 +414,7 @@ func (self *WorkingTreeHelper) CreateMergeConflictMenu(selectedFilepaths []strin
 				OnPress: func() error {
 					return onMergeStrategySelected("--ours")
 				},
-				Key: 'c',
+				Keys: menuKey('c'),
 			},
 			{
 				LabelColumns: []string{
@@ -387,7 +424,7 @@ func (self *WorkingTreeHelper) CreateMergeConflictMenu(selectedFilepaths []strin
 				OnPress: func() error {
 					return onMergeStrategySelected("--theirs")
 				},
-				Key: 'i',
+				Keys: menuKey('i'),
 			},
 			{
 				LabelColumns: []string{
@@ -397,7 +434,7 @@ func (self *WorkingTreeHelper) CreateMergeConflictMenu(selectedFilepaths []strin
 				OnPress: func() error {
 					return onMergeStrategySelected("--union")
 				},
-				Key: 'b',
+				Keys: menuKey('b'),
 			},
 			{
 				LabelColumns: []string{
@@ -405,7 +442,7 @@ func (self *WorkingTreeHelper) CreateMergeConflictMenu(selectedFilepaths []strin
 					cmdColor.Sprint("git mergetool"),
 				},
 				OnPress: self.OpenMergeTool,
-				Key:     'm',
+				Keys:    menuKey('m'),
 			},
 		},
 	})
