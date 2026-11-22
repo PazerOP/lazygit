@@ -1228,20 +1228,17 @@ func (self *RefreshHelper) refreshBranches(captured capturedBranchState, waitFor
 	self.showBranches(branches, loadSeq, branchSelection, env)
 
 	if err == nil && loadExtraInfo {
-		if resolveDivergences == nil {
-			self.loadExtraBranchInfo(branches, captured.mainBranches, env)
-		} else {
-			self.onWorkerUnlessRepoChanged(env, func() error {
-				resolvedBranches, err := resolveDivergences()
-				if err != nil {
-					return err
-				}
-				// The user can select another branch while git determines the divergences, so don't move the selection again
-				self.showBranches(resolvedBranches, loadSeq, types.KeepBranchSelectionByName, env)
-				self.loadExtraBranchInfo(resolvedBranches, captured.mainBranches, env)
-				return nil
-			})
+		if resolveDivergences != nil {
+			// The branches are on screen by now. Wait for their divergences here, so that what runs after the refresh sees them.
+			resolvedBranches, err := resolveDivergences()
+			if err != nil {
+				self.onWorkerUnlessRepoChanged(env, func() error { return err })
+			}
+			// The user can select another branch in the meantime, so don't move the selection again
+			self.showBranches(resolvedBranches, loadSeq, types.KeepBranchSelectionByName, env)
+			branches = resolvedBranches
 		}
+		self.loadExtraBranchInfo(branches, captured.mainBranches, env)
 	}
 
 	// Return the loaded branches so the caller can hand them to the PR fetch without reading them back from the model.

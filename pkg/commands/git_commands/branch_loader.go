@@ -713,6 +713,16 @@ func (self *BranchLoader) resolveDivergences(
 
 	t := time.Now()
 
+	// The divergences of the unresolved branches.
+	results := map[commitPair]divergence{}
+	var resultsMutex sync.Mutex
+	record := func(divergences map[commitPair]divergence) {
+		self.rememberDivergences(divergences)
+		resultsMutex.Lock()
+		defer resultsMutex.Unlock()
+		maps.Copy(results, divergences)
+	}
+
 	// The local branches to compare with each commit
 	refNamesByBase := map[string][]string{}
 	pairs := set.New[commitPair]()
@@ -721,25 +731,26 @@ func (self *BranchLoader) resolveDivergences(
 			if pair == nil {
 				continue
 			}
-			if _, ok := self.knownDivergence(*pair); !ok {
+			if divergence, ok := self.knownDivergence(*pair); ok {
+				results[*pair] = divergence
+			} else {
 				refNamesByBase[pair.base] = append(refNamesByBase[pair.base], entry.branch.FullRefName())
 				pairs.Add(*pair)
 			}
 		}
 	}
 
-	if err := self.loadDivergences(pairs.ToSlice(), refNamesByBase); err != nil {
-		return nil, err
-	}
+	// If git fails, the branches that it didn't get to have an unknown divergence, and we return them along with the error
+	err := self.loadDivergences(pairs.ToSlice(), refNamesByBase, record)
 
 	resolvedByOriginal := make(map[*models.Branch]*models.Branch, len(unresolved))
 	for _, entry := range unresolved {
 		resolved := entry.branch.Clone()
 		resolved.DivergencePending = false
-		resolved.AheadForPull, resolved.BehindForPull = self.resolvedDivergence(
-			entry.pull, entry.branch.AheadForPull, entry.branch.BehindForPull)
-		resolved.AheadForPush, resolved.BehindForPush = self.resolvedDivergence(
-			entry.push, entry.branch.AheadForPush, entry.branch.BehindForPush)
+		resolved.AheadForPull, resolved.BehindForPull = resolvedDivergence(
+			entry.pull, results, entry.branch.AheadForPull, entry.branch.BehindForPull)
+		resolved.AheadForPush, resolved.BehindForPush = resolvedDivergence(
+			entry.push, results, entry.branch.AheadForPush, entry.branch.BehindForPush)
 		resolvedByOriginal[entry.branch] = resolved
 	}
 
@@ -750,35 +761,47 @@ func (self *BranchLoader) resolveDivergences(
 			return resolved
 		}
 		return branch
-	}), nil
+	}), err
 }
 
 // Returns the divergence of the given pair as the branch model holds it. nil
 // stands for a divergence that was known from the start, so its values stay.
 // A branch that moved while we were asking git about it has no result; its
 // divergence is unknown until the next load.
-func (self *BranchLoader) resolvedDivergence(pair *commitPair, ahead string, behind string) (string, string) {
+func resolvedDivergence(
+	pair *commitPair,
+	results map[commitPair]divergence,
+	ahead string,
+	behind string,
+) (string, string) {
 	if pair == nil {
 		return ahead, behind
 	}
-	if divergence, ok := self.knownDivergence(*pair); ok {
+	if divergence, ok := results[*pair]; ok {
 		return strconv.Itoa(divergence.ahead), strconv.Itoa(divergence.behind)
 	}
 	return "?", "?"
 }
 
 // Asks git how far the given local branches have diverged from the commits
-// that they are listed under, and remembers the results
-func (self *BranchLoader) loadDivergences(pairs []commitPair, refNamesByBase map[string][]string) error {
+// that they are listed under, and passes the results to record
+func (self *BranchLoader) loadDivergences(
+	pairs []commitPair,
+	refNamesByBase map[string][]string,
+	record func(map[commitPair]divergence),
+) error {
 	if self.version.IsAtLeast(2, 41, 0) {
-		return self.loadDivergencesFast(refNamesByBase)
+		return self.loadDivergencesFast(refNamesByBase, record)
 	}
-	return self.loadDivergencesLegacy(pairs)
+	return self.loadDivergencesLegacy(pairs, record)
 }
 
 // One git process per base commit. git walks through the history of all the
 // branches that are compared with that commit once.
-func (self *BranchLoader) loadDivergencesFast(refNamesByBase map[string][]string) error {
+func (self *BranchLoader) loadDivergencesFast(
+	refNamesByBase map[string][]string,
+	record func(map[commitPair]divergence),
+) error {
 	errg := errgroup.Group{}
 	errg.SetLimit(runtime.GOMAXPROCS(0))
 
@@ -808,7 +831,7 @@ func (self *BranchLoader) loadDivergencesFast(refNamesByBase map[string][]string
 					}
 				}
 			}
-			self.rememberDivergences(divergences)
+			record(divergences)
 			return nil
 		}))
 	}
@@ -818,7 +841,10 @@ func (self *BranchLoader) loadDivergencesFast(refNamesByBase map[string][]string
 
 // One git process per branch and base commit, for git versions that don't
 // have %(ahead-behind:...)
-func (self *BranchLoader) loadDivergencesLegacy(pairs []commitPair) error {
+func (self *BranchLoader) loadDivergencesLegacy(
+	pairs []commitPair,
+	record func(map[commitPair]divergence),
+) error {
 	errg := errgroup.Group{}
 	errg.SetLimit(runtime.GOMAXPROCS(0))
 
@@ -837,7 +863,7 @@ func (self *BranchLoader) loadDivergencesLegacy(pairs []commitPair) error {
 
 			// The format of the output is "<ahead>\t<behind>"
 			if aheadBehind := parseAheadBehindField(output); aheadBehind.valid {
-				self.rememberDivergences(map[commitPair]divergence{
+				record(map[commitPair]divergence{
 					pair: {ahead: aheadBehind.ahead, behind: aheadBehind.behind},
 				})
 			}
