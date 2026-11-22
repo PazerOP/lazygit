@@ -2090,14 +2090,15 @@ func IsMouseScrollKey(keyName KeyName) bool {
 func (g *Gui) execKeybindings(v *View, ev *GocuiEvent) error {
 	var globalKb *keybinding
 	var matchingParentViewKb *keybinding
+	key := ev.keyForBindings()
 
 	// if we're searching, and we've hit n/N/Esc, we ignore the default keybinding
 	if v != nil && v.IsSearching() {
-		if lo.SomeBy(g.NextSearchMatchKeys, func(k Key) bool { return ev.Key.Equals(k) }) {
+		if lo.SomeBy(g.NextSearchMatchKeys, func(k Key) bool { return key.Equals(k) }) {
 			return v.gotoNextMatch()
-		} else if lo.SomeBy(g.PrevSearchMatchKeys, func(k Key) bool { return ev.Key.Equals(k) }) {
+		} else if lo.SomeBy(g.PrevSearchMatchKeys, func(k Key) bool { return key.Equals(k) }) {
 			return v.gotoPreviousMatch()
-		} else if lo.SomeBy(g.SearchEscapeKeys, func(k Key) bool { return ev.Key.Equals(k) }) {
+		} else if lo.SomeBy(g.SearchEscapeKeys, func(k Key) bool { return key.Equals(k) }) {
 			v.searcher.clearSearch()
 			if g.OnSearchEscape != nil {
 				if err := g.OnSearchEscape(); err != nil {
@@ -2114,7 +2115,7 @@ func (g *Gui) execKeybindings(v *View, ev *GocuiEvent) error {
 		if kb.handler == nil {
 			continue
 		}
-		if !kb.matchKeypress(ev.Key) {
+		if !kb.matchKeypress(key) {
 			continue
 		}
 		if g.matchView(v, kb) {

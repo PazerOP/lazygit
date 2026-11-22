@@ -5,7 +5,10 @@
 package gocui
 
 import (
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/gdamore/tcell/v3"
 	"github.com/gdamore/tcell/v3/vt"
@@ -64,7 +67,8 @@ func (g *Gui) tcellInit(runeReplacements map[rune]string) error {
 	}
 	colorSchemeTty := newColorSchemeTty(tty)
 
-	s, e := tcell.NewTerminfoScreenFromTty(colorSchemeTty)
+	// Advanced key reports carry the Shift state of text keys, which lets us ignore Caps Lock.
+	s, e := tcell.NewTerminfoScreenFromTty(colorSchemeTty, tcell.OptAdvancedKeys(true))
 	if e != nil {
 		return e
 	}
@@ -184,20 +188,50 @@ type GocuiEvent struct {
 	Focused bool
 	Start   bool
 	N       int
-<<<<<<< HEAD:vendor/github.com/jesseduffield/gocui/tcell_driver.go
-	// ShiftPressed is true when the Shift key was physically held down,
-	// as reported by an extended terminal key protocol (kitty CSI-u,
-	// xterm modifyOtherKeys, win32-input-mode). This allows distinguishing
-	// Shift+key from CapsLock-induced uppercase.
-	ShiftPressed bool
-=======
 
 	// task tracks the processing of this event for idle detection. Events
 	// replayed by integration tests carry a task from the moment they are
 	// submitted (see Gui.ReplayKeyEvent); for organic events it is nil, and
 	// the main loop creates a task when it picks the event up.
 	task Task
->>>>>>> 54cc6af1d77b5a6cec3dc9ad0b203afdb4ad3451:pkg/gocui/tcell_driver.go
+
+	// shiftPressed is true when the terminal reported Shift with a text key.
+	shiftPressed bool
+
+	// bindingKey is the key that keybindings match. It is unset when it is the same as Key. See caseFromShift.
+	bindingKey Key
+}
+
+// keyForBindings returns the key that keybindings match against. Text editing
+// uses Key, so that Caps Lock still types capital letters.
+func (ev *GocuiEvent) keyForBindings() Key {
+	if ev.bindingKey.IsSet() {
+		return ev.bindingKey
+	}
+	return ev.Key
+}
+
+// caseFromShift returns a typed letter in the case that the Shift key selects,
+// so that Caps Lock does not change which binding runs. It returns an unset
+// Key for an event that is not a single cased letter.
+func caseFromShift(ev *GocuiEvent) Key {
+	if ev.Type != eventKey || !ev.Key.IsPrintable() {
+		return Key{}
+	}
+	r, size := utf8.DecodeRuneInString(ev.Key.Str())
+	if size != len(ev.Key.Str()) || !(unicode.IsUpper(r) || unicode.IsLower(r)) {
+		return Key{}
+	}
+	if ev.shiftPressed {
+		return NewKeyRune(unicode.ToUpper(r))
+	}
+	return NewKeyRune(unicode.ToLower(r))
+}
+
+// reportsShiftForText reports whether the keyboard protocol sends the Shift
+// state with every text key.
+func reportsShiftForText(protocol tcell.KeyProtocol) bool {
+	return protocol == tcell.KittyKeyboard || protocol == tcell.Win32Keyboard
 }
 
 // Event types.
@@ -353,6 +387,9 @@ func (g *Gui) pollEvent() GocuiEvent {
 
 	event := gocuiEventFromTcellEvent(tev)
 	event.task = task
+	if reportsShiftForText(Screen.KeyboardProtocol()) {
+		event.bindingKey = caseFromShift(&event)
+	}
 	return event
 }
 
@@ -365,6 +402,9 @@ func gocuiEventFromTcellEvent(tev tcell.Event) GocuiEvent {
 		return GocuiEvent{Type: eventResize, Width: w, Height: h}
 	case *tcell.EventKey:
 		k := tev.Key()
+		if !tev.Pressed() || isLoneModifierKey(k) {
+			return GocuiEvent{Type: eventNone}
+		}
 		ch := ""
 		if k == tcell.KeyRune {
 			ch = tev.Str()
@@ -372,61 +412,26 @@ func gocuiEventFromTcellEvent(tev tcell.Event) GocuiEvent {
 			ch = string(rune('a' + (k - tcell.KeyCtrlA)))
 			k = tcell.KeyRune
 		}
-		mod := tev.Modifiers()
-<<<<<<< HEAD:vendor/github.com/jesseduffield/gocui/tcell_driver.go
+		// Remove the left and right modifier bits of advanced key reports.
+		mod := tev.Modifiers() & (tcell.ModShift | tcell.ModCtrl | tcell.ModAlt | tcell.ModMeta | tcell.ModHyper)
+
+		// Map advanced key reports to the forms.
 		shiftPressed := false
-		// remove control modifier and setup special handling of ctrl+spacebar, etc.
-		if mod == tcell.ModCtrl && k == 32 {
-			mod = 0
-			ch = rune(0)
-			k = tcell.KeyCtrlSpace
-		} else if mod == tcell.ModShift && k == tcell.KeyUp {
-			mod = 0
-			ch = rune(0)
-			k = tcell.KeyF62
-		} else if mod == tcell.ModShift && k == tcell.KeyDown {
-			mod = 0
-			ch = rune(0)
-			k = tcell.KeyF63
-		} else if mod == tcell.ModCtrl|tcell.ModShift {
-			// Ctrl+Shift combination: strip both, record shift
+		if k == tcell.KeyRune && ch != "" && mod == tcell.ModShift {
+			// The Shift state is already in the text.
 			shiftPressed = true
-			if ch >= 'a' && ch <= 'z' {
-				ch = ch - 'a' + 'A'
-			}
-			mod = 0
-		} else if mod == tcell.ModCtrl {
-			// ctrl is translated in the key
-			mod = 0
-		} else if mod == tcell.ModShift {
-			// Shift reported by extended key protocol (kitty CSI-u,
-			// xterm modifyOtherKeys, win32-input-mode). The rune may
-			// be the base key (lowercase from kitty) — ensure uppercase.
-			shiftPressed = true
-			if ch >= 'a' && ch <= 'z' {
-				ch = ch - 'a' + 'A'
-			}
-			mod = 0
-		} else if mod == tcell.ModAlt && k == tcell.KeyEnter {
-			// for the sake of convenience I'm having a KeyAltEnter key. I will likely
-			// regret this laziness in the future. We're arbitrarily mapping that to tcell's
-			// KeyF64.
-			mod = 0
-			k = tcell.KeyF64
+			mod = tcell.ModNone
+		} else if k == tcell.KeyRune && mod == tcell.ModCtrl && len(ch) == 1 && ch[0] >= 'A' && ch[0] <= 'Z' {
+			ch = strings.ToLower(ch)
+		} else if k == tcell.KeyTab && mod&tcell.ModShift != 0 {
+			k = tcell.KeyBacktab
+			mod &^= tcell.ModShift
 		}
 
 		return GocuiEvent{
 			Type:         eventKey,
-			Key:          Key(k),
-			Ch:           ch,
-			Mod:          Modifier(mod),
-			ShiftPressed: shiftPressed,
-=======
-
-		return GocuiEvent{
-			Type: eventKey,
-			Key:  NewKey(KeyName(k), ch, Modifier(mod)),
->>>>>>> 54cc6af1d77b5a6cec3dc9ad0b203afdb4ad3451:pkg/gocui/tcell_driver.go
+			Key:          NewKey(KeyName(k), ch, Modifier(mod)),
+			shiftPressed: shiftPressed,
 		}
 	case *tcell.EventMouse:
 		x, y := tev.Position()
@@ -547,4 +552,15 @@ func gocuiEventFromTcellEvent(tev tcell.Event) GocuiEvent {
 	default:
 		return GocuiEvent{Type: eventNone}
 	}
+}
+
+// isLoneModifierKey reports whether k is a modifier or lock key pressed on
+// its own. Advanced key reports send these, but they do not run bindings.
+func isLoneModifierKey(k tcell.Key) bool {
+	switch k {
+	case tcell.KeyShift, tcell.KeyCtrl, tcell.KeyAlt, tcell.KeyMeta, tcell.KeyHyper,
+		tcell.KeyCapsLock, tcell.KeyNumLock, tcell.KeyScrollLock:
+		return true
+	}
+	return false
 }
