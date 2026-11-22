@@ -387,7 +387,9 @@ func (g *Gui) pollEvent() GocuiEvent {
 
 	event := gocuiEventFromTcellEvent(tev)
 	event.task = task
-	if reportsShiftForText(Screen.KeyboardProtocol()) {
+	// A replayed key is a legacy event without the Shift state, so only a key
+	// from the terminal can show Caps Lock.
+	if !g.playRecording && reportsShiftForText(Screen.KeyboardProtocol()) {
 		event.bindingKey = caseFromShift(&event)
 	}
 	return event
