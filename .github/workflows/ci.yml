@@ -70,11 +70,12 @@ jobs:
           key: ${{runner.os}}-git-${{matrix.git-version}}
       - name: Build Git ${{matrix.git-version}}
         if: steps.cache-git-restore.outputs.cache-hit != 'true' && matrix.git-version != 'latest'
+        # These git versions do not compile as C23, so select the C17 dialect.
         run: >
           sudo apt-get update && sudo apt-get install --no-install-recommends -y build-essential ca-certificates curl gettext libexpat1-dev libssl-dev libz-dev openssl
           && curl -sL "https://mirrors.edge.kernel.org/pub/software/scm/git/git-${{matrix.git-version}}.tar.xz" -o - | tar xJ -C "$HOME"
           && cd "$HOME/git-${{matrix.git-version}}"
-          && ./configure
+          && ./configure CFLAGS="-g -O2 -std=gnu17"
           && make -j
       - name: Install Git ${{matrix.git-version}}
         if: matrix.git-version != 'latest'
