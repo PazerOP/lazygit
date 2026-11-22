@@ -74,7 +74,7 @@ jobs:
           sudo apt-get update && sudo apt-get install --no-install-recommends -y build-essential ca-certificates curl gettext libexpat1-dev libssl-dev libz-dev openssl
           && curl -sL "https://mirrors.edge.kernel.org/pub/software/scm/git/git-${{matrix.git-version}}.tar.xz" -o - | tar xJ -C "$HOME"
           && cd "$HOME/git-${{matrix.git-version}}"
-          && ./configure
+          && ./configure CFLAGS="-O2 -std=gnu17"
           && make -j
       - name: Install Git ${{matrix.git-version}}
         if: matrix.git-version != 'latest'
