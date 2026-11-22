@@ -561,6 +561,7 @@ func isLoneModifierKey(k tcell.Key) bool {
 	case tcell.KeyShift, tcell.KeyCtrl, tcell.KeyAlt, tcell.KeyMeta, tcell.KeyHyper,
 		tcell.KeyCapsLock, tcell.KeyNumLock, tcell.KeyScrollLock:
 		return true
+	default:
+		return false
 	}
-	return false
 }
