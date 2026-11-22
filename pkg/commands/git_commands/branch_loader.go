@@ -202,7 +202,9 @@ func (self *BranchLoader) Load(
 		}
 		if branch.DivergencePending {
 			unresolved = append(unresolved, unresolvedBranch{
-				branch: branch, pull: pullPair, push: pushPair,
+				branch: branch,
+				pull:   self.pairIfUnknown(pullPair),
+				push:   self.pairIfUnknown(pushPair),
 			})
 		}
 	}
@@ -664,6 +666,17 @@ func (self *BranchLoader) knownDivergence(pair commitPair) (divergence, bool) {
 
 	result, ok := self.divergences[pair]
 	return result, ok
+}
+
+// Returns the given pair if we don't know its divergence, and nil otherwise
+func (self *BranchLoader) pairIfUnknown(pair *commitPair) *commitPair {
+	if pair == nil {
+		return nil
+	}
+	if _, ok := self.knownDivergence(*pair); ok {
+		return nil
+	}
+	return pair
 }
 
 func (self *BranchLoader) rememberDivergences(divergences map[commitPair]divergence) {

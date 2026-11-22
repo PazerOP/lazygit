@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jesseduffield/generics/set"
 	"github.com/jesseduffield/lazygit/pkg/commands/models"
 	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
 	"github.com/samber/lo"
@@ -176,6 +177,36 @@ func TestBranchLoaderDivergences(t *testing.T) {
 		resolvedBranches, err := resolveSecond()
 		assert.NoError(t, err)
 		assert.Equal(t, resolved, branchDivergences(resolvedBranches))
+	})
+
+	t.Run("a divergence that was known when the branches were listed stays as it was", func(t *testing.T) {
+		runner := oscommands.NewFakeRunner(t)
+		loader := buildBranchLoader(runner, &GitVersion{2, 41, 0, ""})
+		loader.rememberDivergences(map[commitPair]divergence{
+			{tip: "bbb", base: "aaa"}: {ahead: 0, behind: 3},
+			{tip: "ccc", base: "ddd"}: {ahead: 2, behind: 5},
+		})
+
+		// The push destination of the diverged branch exists now
+		expectListing(runner, branchList, trackedTips+"refs/remotes/fork/diverged\x00ppp\n")
+		branches, resolveDivergences, err := loader.Load(nil, nil)
+		assert.NoError(t, err)
+		assert.Equal(t,
+			branchDivergence{name: "diverged", aheadForPull: "2", behindForPull: "5", aheadForPush: "?", behindForPush: "?", pending: true},
+			branchDivergences(branches)[2])
+
+		// A later load of a repository that has changed needs other divergences
+		loader.forgetDivergencesExcept(set.New[commitPair]())
+
+		runner.ExpectGitArgs([]string{
+			"for-each-ref", "--format=%(objectname)%00%(ahead-behind:ppp)", "refs/heads/diverged",
+		}, "ccc\x001 0\n", nil)
+		resolvedBranches, err := resolveDivergences()
+		assert.NoError(t, err)
+		assert.Equal(t,
+			branchDivergence{name: "diverged", aheadForPull: "2", behindForPull: "5", aheadForPush: "1", behindForPush: "0"},
+			branchDivergences(resolvedBranches)[2])
+		runner.CheckForMissingCalls()
 	})
 
 	t.Run("a branch that moves while git determines its divergence stays unknown", func(t *testing.T) {
