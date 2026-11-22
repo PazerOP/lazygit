@@ -57,6 +57,8 @@ type BranchLoader struct {
 	// The divergences that the last load needed. A divergence is a property of commits, so it never changes.
 	divergences      map[commitPair]divergence
 	divergencesMutex deadlock.Mutex
+	// Held while git determines divergences, so that a second refresh waits for the results instead of asking git for the same ones.
+	resolveDivergencesMutex sync.Mutex
 }
 
 func NewBranchLoader(
@@ -83,8 +85,8 @@ func NewBranchLoader(
 // its upstream and from its push destination. This can take long. So that the
 // branch list doesn't have to wait for it, the returned branches only have
 // the divergences that are known without it. If any are missing, the second
-// return value is a function that determines them and returns the branches
-// again. That value is with new models for the branches that it filled in.
+// return value is a function that determines them. It returns the branches
+// again, with a new model for each branch that it filled in.
 func (self *BranchLoader) Load(
 	reflogCommits []*models.Commit,
 	oldBranches []*models.Branch,
@@ -534,11 +536,12 @@ type divergence struct {
 	behind int
 }
 
-// A branch that has a divergence that we do not know yet. pull.
 type unresolvedBranch struct {
 	branch *models.Branch
-	pull   *commitPair
-	push   *commitPair
+	// The commits that give the divergence from the upstream
+	pull *commitPair
+	// The commits that give the divergence from the push destination
+	push *commitPair
 }
 
 // When more local branches than this are to be compared with the same commit, we ask git about all of them.
@@ -692,6 +695,9 @@ func (self *BranchLoader) resolveDivergences(
 	branches []*models.Branch,
 	unresolved []unresolvedBranch,
 ) ([]*models.Branch, error) {
+	self.resolveDivergencesMutex.Lock()
+	defer self.resolveDivergencesMutex.Unlock()
+
 	t := time.Now()
 
 	// The local branches to compare with each commit

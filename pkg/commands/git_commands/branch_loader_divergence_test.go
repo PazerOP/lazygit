@@ -150,6 +150,34 @@ func TestBranchLoaderDivergences(t *testing.T) {
 		runner.CheckForMissingCalls()
 	})
 
+	t.Run("a second load doesn't ask git again for what the first one is determining", func(t *testing.T) {
+		runner := oscommands.NewFakeRunner(t)
+		loader := buildBranchLoader(runner, &GitVersion{2, 41, 0, ""})
+
+		expectListing(runner, branchList, trackedTips)
+		_, resolveFirst, err := loader.Load(nil, nil)
+		assert.NoError(t, err)
+		expectListing(runner, branchList, trackedTips)
+		_, resolveSecond, err := loader.Load(nil, nil)
+		assert.NoError(t, err)
+
+		runner.
+			ExpectGitArgs([]string{
+				"for-each-ref", "--format=%(objectname)%00%(ahead-behind:aaa)", "refs/heads/behind",
+			}, "bbb\x000 3\n", nil).
+			ExpectGitArgs([]string{
+				"for-each-ref", "--format=%(objectname)%00%(ahead-behind:ddd)", "refs/heads/diverged",
+			}, "ccc\x002 5\n", nil)
+		_, err = resolveFirst()
+		assert.NoError(t, err)
+		runner.CheckForMissingCalls()
+
+		// The runner fails the test if a command runs again
+		resolvedBranches, err := resolveSecond()
+		assert.NoError(t, err)
+		assert.Equal(t, resolved, branchDivergences(resolvedBranches))
+	})
+
 	t.Run("a branch that moves while git determines its divergence stays unknown", func(t *testing.T) {
 		runner := oscommands.NewFakeRunner(t)
 		loader := buildBranchLoader(runner, &GitVersion{2, 41, 0, ""})
