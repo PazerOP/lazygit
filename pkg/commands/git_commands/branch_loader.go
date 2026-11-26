@@ -2,10 +2,13 @@ package git_commands
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jesseduffield/generics/set"
@@ -14,6 +17,7 @@ import (
 	"github.com/jesseduffield/lazygit/pkg/common"
 	"github.com/jesseduffield/lazygit/pkg/utils"
 	"github.com/samber/lo"
+	"github.com/sasha-s/go-deadlock"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -46,8 +50,15 @@ type BranchLoader struct {
 	*GitCommon
 	cmd                  oscommands.ICmdObjBuilder
 	getCurrentBranchInfo func() (BranchInfo, error)
-	hasLocalOnlyCommits  func(*models.Branch) (bool, error)
-	config               BranchLoaderConfigCommands
+	// Returns a function that tells whether a branch that is ahead of its upstream has commits of its own
+	newLocalOnlyCommitsCheck func() func(*models.Branch) (bool, error)
+	config                   BranchLoaderConfigCommands
+
+	// The divergences that the last load needed. A divergence is a property of commits, so it never changes.
+	divergences      map[commitPair]divergence
+	divergencesMutex deadlock.Mutex
+	// Held while git determines divergences, so that a second refresh waits for the results instead of asking git for the same ones.
+	resolveDivergencesMutex sync.Mutex
 }
 
 func NewBranchLoader(
@@ -55,36 +66,52 @@ func NewBranchLoader(
 	gitCommon *GitCommon,
 	cmd oscommands.ICmdObjBuilder,
 	getCurrentBranchInfo func() (BranchInfo, error),
-	hasLocalOnlyCommits func(*models.Branch) (bool, error),
+	newLocalOnlyCommitsCheck func() func(*models.Branch) (bool, error),
 	config BranchLoaderConfigCommands,
 ) *BranchLoader {
 	return &BranchLoader{
-		Common:               cmn,
-		GitCommon:            gitCommon,
-		cmd:                  cmd,
-		getCurrentBranchInfo: getCurrentBranchInfo,
-		hasLocalOnlyCommits:  hasLocalOnlyCommits,
-		config:               config,
+		Common:                   cmn,
+		GitCommon:                gitCommon,
+		cmd:                      cmd,
+		getCurrentBranchInfo:     getCurrentBranchInfo,
+		newLocalOnlyCommitsCheck: newLocalOnlyCommitsCheck,
+		config:                   config,
 	}
 }
 
-// Load the list of branches for the current repo
-func (self *BranchLoader) Load(reflogCommits []*models.Commit,
-	mainBranches *MainBranches,
+// Load the list of branches for the current repo.
+//
+// Git has to walk through history to tell how far a branch has diverged from
+// its upstream and from its push destination. This can take long. So that the
+// branch list doesn't have to wait for it, the returned branches only have
+// the divergences that are known without it. If any are missing, the second
+// return value is a function that determines them. It returns the branches
+// again, with a new model for each branch that it filled in.
+func (self *BranchLoader) Load(
+	reflogCommits []*models.Commit,
 	oldBranches []*models.Branch,
-	loadExtraInfo bool,
-	onWorker func(func() error),
-	renderFunc func(),
-) ([]*models.Branch, error) {
-	branches, tips, err := self.obtainBranches()
+) ([]*models.Branch, func() ([]*models.Branch, error), error) {
+	branches, tips, trackedRefs, err := self.obtainBranches()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+
+	// Sorting the branches can run git commands too, so run the other commands that follow the listing at the same time
+	var wg sync.WaitGroup
+	var refTips map[string]string
+	var refTipsErr error
+	var configBranches map[string]*BranchConfig
+	wg.Go(utils.SafeFunc(func() {
+		refTips, refTipsErr = self.loadTipsOfTrackedRefs(tips, trackedRefs)
+	}))
+	wg.Go(utils.SafeFunc(func() {
+		configBranches = self.config.Branches(self.cmd)
+	}))
 
 	switch self.UserConfig().Git.LocalBranchSortOrder {
 	case "date":
 		if err := sortRefsWithEqualDatesByAncestry(
-			self.cmd, self.version, branches, (*models.Branch).FullRefName, tips,
+			self.cmd, branches, (*models.Branch).FullRefName, tips,
 		); err != nil {
 			self.Log.Errorf("Failed to sort branches by ancestry: %v", err)
 		}
@@ -117,6 +144,11 @@ func (self *BranchLoader) Load(reflogCommits []*models.Commit,
 		branches = utils.Prepend(branches, branchesWithRecency...)
 	}
 
+	wg.Wait()
+	if refTipsErr != nil {
+		return nil, nil, refTipsErr
+	}
+
 	foundHead := false
 	for i, branch := range branches {
 		if branch.Head {
@@ -129,12 +161,16 @@ func (self *BranchLoader) Load(reflogCommits []*models.Commit,
 	if !foundHead {
 		info, err := self.getCurrentBranchInfo()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		branches = utils.Prepend(branches, &models.Branch{Name: info.RefName, DisplayName: info.DisplayName, Head: true, DetachedHead: info.DetachedHead, Subject: info.Subject, Recency: "  *"})
 	}
 
-	configBranches := self.config.Branches(self.cmd)
+	oldBranchesByName := lo.KeyBy(oldBranches, func(b *models.Branch) string {
+		return b.Name
+	})
+	unresolved := []unresolvedBranch{}
+	neededPairs := set.New[commitPair]()
 
 	for _, branch := range branches {
 		match := configBranches[branch.Name]
@@ -143,29 +179,66 @@ func (self *BranchLoader) Load(reflogCommits []*models.Commit,
 			branch.UpstreamBranch = match.Merge
 		}
 
+		oldBranch := oldBranchesByName[branch.Name]
+
 		// If the branch already existed, take over the values that are
 		// determined in the background, to reduce flicker
-		if oldBranch, found := lo.Find(oldBranches, func(b *models.Branch) bool {
-			return b.Name == branch.Name
-		}); found {
+		if oldBranch != nil {
 			branch.BehindBaseBranch.Store(oldBranch.BehindBaseBranch.Load())
 			branch.UpstreamRewritten.Store(oldBranch.UpstreamRewritten.Load())
 		}
-	}
 
-	if loadExtraInfo {
-		if self.UserConfig().Gui.ShowDivergenceFromBaseBranch != "none" {
-			onWorker(func() error {
-				return self.GetBehindBaseBranchValuesForAllBranches(branches, mainBranches, renderFunc)
+		refs, ok := trackedRefs[branch.FullRefName()]
+		if !ok {
+			// A detached head tracks nothing
+			continue
+		}
+		tip := tips[branch.FullRefName()].hash
+		pullPair, pushPair := self.setDivergences(branch, tip, refs, refTips, oldBranch)
+		for _, pair := range []*commitPair{pullPair, pushPair} {
+			if pair != nil {
+				neededPairs.Add(*pair)
+			}
+		}
+		if branch.DivergencePending {
+			unresolved = append(unresolved, unresolvedBranch{
+				branch: branch,
+				pull:   self.pairIfUnknown(pullPair),
+				push:   self.pairIfUnknown(pushPair),
 			})
 		}
+	}
 
+	self.forgetDivergencesExcept(neededPairs)
+
+	if len(unresolved) == 0 {
+		return branches, nil, nil
+	}
+
+	resolveDivergences := func() ([]*models.Branch, error) {
+		return self.resolveDivergences(branches, unresolved)
+	}
+	return branches, resolveDivergences, nil
+}
+
+// Starts loading the values of the given branches that take too long to
+// determine to make the branch list wait for them. Each of them is loaded on a
+// worker, which calls renderFunc when it is done.
+func (self *BranchLoader) LoadExtraInfo(
+	branches []*models.Branch,
+	mainBranches *MainBranches,
+	onWorker func(func() error),
+	renderFunc func(),
+) {
+	if self.UserConfig().Gui.ShowDivergenceFromBaseBranch != "none" {
 		onWorker(func() error {
-			return self.checkForRewrittenUpstreams(branches, renderFunc)
+			return self.GetBehindBaseBranchValuesForAllBranches(branches, mainBranches, renderFunc)
 		})
 	}
 
-	return branches, nil
+	onWorker(func() error {
+		return self.checkForRewrittenUpstreams(branches, renderFunc)
+	})
 }
 
 // For each branch that has diverged from its upstream, determines whether the
@@ -174,7 +247,10 @@ func (self *BranchLoader) Load(reflogCommits []*models.Commit,
 // answer "no", so that we don't offer anything we aren't sure about.
 func (self *BranchLoader) checkForRewrittenUpstreams(branches []*models.Branch, renderFunc func()) error {
 	t := time.Now()
+	hasLocalOnlyCommits := self.newLocalOnlyCommitsCheck()
 	errg := errgroup.Group{}
+	// Each check runs git processes; a repository can have thousands of diverged branches
+	errg.SetLimit(runtime.GOMAXPROCS(0))
 
 	for _, branch := range branches {
 		if !branch.IsAheadForPull() || !branch.IsBehindForPull() {
@@ -183,7 +259,7 @@ func (self *BranchLoader) checkForRewrittenUpstreams(branches []*models.Branch, 
 		}
 
 		errg.Go(utils.SafeFuncWithError(func() error {
-			hasLocalOnlyCommits, err := self.hasLocalOnlyCommits(branch)
+			hasLocalOnlyCommits, err := hasLocalOnlyCommits(branch)
 			if err != nil {
 				// Not worth bothering the user about; it only means that we
 				// don't show this branch differently.
@@ -329,18 +405,20 @@ func (self *BranchLoader) GetBaseBranch(branch *models.Branch, mainBranches *Mai
 	return split[0], nil
 }
 
-// Returns the branches, along with the tip of each of them, keyed by full ref
-// name
-func (self *BranchLoader) obtainBranches() ([]*models.Branch, map[string]refTip, error) {
+// Returns the branches, along with the tip of each of them and the refs that
+// it tracks, both keyed by full ref name. The branches don't have their
+// divergences yet.
+func (self *BranchLoader) obtainBranches() ([]*models.Branch, map[string]refTip, map[string]trackedRefs, error) {
 	output, err := self.getRawBranches()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	trimmedOutput := strings.TrimSpace(output)
 	outputLines := strings.Split(trimmedOutput, "\n")
 
 	tips := make(map[string]refTip, len(outputLines))
+	trackedRefsByBranch := make(map[string]trackedRefs, len(outputLines))
 	branches := lo.FilterMap(outputLines, func(line string, _ int) (*models.Branch, bool) {
 		if line == "" {
 			return nil, false
@@ -355,12 +433,13 @@ func (self *BranchLoader) obtainBranches() ([]*models.Branch, map[string]refTip,
 		}
 
 		storeCommitDateAsRecency := self.UserConfig().Git.LocalBranchSortOrder != "recency"
-		branch, tip := obtainBranch(split, storeCommitDateAsRecency)
+		branch, tip, refs := obtainBranch(split, storeCommitDateAsRecency)
 		tips[branch.FullRefName()] = tip
+		trackedRefsByBranch[branch.FullRefName()] = refs
 		return branch, true
 	})
 
-	return branches, tips, nil
+	return branches, tips, trackedRefsByBranch, nil
 }
 
 func (self *BranchLoader) getRawBranches() (string, error) {
@@ -390,33 +469,38 @@ func (self *BranchLoader) getRawBranches() (string, error) {
 	return self.cmd.New(cmdArgs).DontLog().RunWithOutput()
 }
 
+// The fields leave out %(upstream:track) and %(push:track). Git walks through
+// history for each branch to fill them in.
 var branchFields = []string{
 	"HEAD",
-	"refname:short",
-	"upstream:short",
-	"upstream:track",
-	"push:track",
+	"refname",
+	"upstream",
 	"push",
 	"subject",
 	"objectname",
 	"committerdate:unix",
 }
 
-// Obtain branch information from parsed line output of getRawBranches()
-func obtainBranch(split []string, storeCommitDateAsRecency bool) (*models.Branch, refTip) {
+// The refs that a branch is compared with, as full ref names
+type trackedRefs struct {
+	// The remote-tracking branch of the upstream. Empty if the branch has no upstream.
+	upstream string
+	// The remote-tracking branch that a push of the branch updates. Empty if git has no push destination for the branch.
+	push string
+}
+
+// Obtain branch information from parsed line output of getRawBranches(). The
+// branch doesn't have its divergences yet.
+func obtainBranch(split []string, storeCommitDateAsRecency bool) (*models.Branch, refTip, trackedRefs) {
 	headMarker := split[0]
 	fullName := split[1]
-	upstreamName := split[2]
-	track := split[3]
-	pushTrack := split[4]
-	pushRef := split[5]
-	subject := split[6]
-	commitHash := split[7]
-	commitDate := split[8]
+	upstreamRef := split[2]
+	pushRef := split[3]
+	subject := split[4]
+	commitHash := split[5]
+	commitDate := split[6]
 
-	name := strings.TrimPrefix(fullName, "heads/")
-	aheadForPull, behindForPull, gone := parseUpstreamInfo(upstreamName, track)
-	aheadForPush, behindForPush, _ := parseUpstreamInfo(upstreamName, pushTrack)
+	name := strings.TrimPrefix(fullName, "refs/heads/")
 	pushRemote, pushBranch := parsePushDestination(pushRef)
 
 	recency := ""
@@ -427,39 +511,367 @@ func obtainBranch(split []string, storeCommitDateAsRecency bool) (*models.Branch
 	}
 
 	branch := &models.Branch{
-		Name:          name,
-		Recency:       recency,
-		AheadForPull:  aheadForPull,
-		BehindForPull: behindForPull,
-		AheadForPush:  aheadForPush,
-		BehindForPush: behindForPush,
-		PushRemote:    pushRemote,
-		PushBranch:    pushBranch,
-		UpstreamGone:  gone,
-		Head:          headMarker == "*",
-		Subject:       subject,
-		CommitHash:    commitHash,
+		Name:       name,
+		Recency:    recency,
+		PushRemote: pushRemote,
+		PushBranch: pushBranch,
+		Head:       headMarker == "*",
+		Subject:    subject,
+		CommitHash: commitHash,
 	}
 
-	return branch, refTip{hash: commitHash, committerDate: commitDate}
+	return branch,
+		refTip{hash: commitHash, committerDate: commitDate},
+		trackedRefs{upstream: upstreamRef, push: pushRef}
 }
 
-func parseUpstreamInfo(upstreamName string, track string) (string, string, bool) {
-	if upstreamName == "" {
-		// if we're here then it means we do not have a local version of the remote.
-		// The branch might still be tracking a remote though, we just don't know
-		// how many commits ahead/behind it is
-		return "?", "?", false
+// Commits that are compared with each other
+type commitPair struct {
+	tip  string
+	base string
+}
+
+// How many commits the tip of a commitPair has that the base doesn't have, and
+// the other way round
+type divergence struct {
+	ahead  int
+	behind int
+}
+
+type unresolvedBranch struct {
+	branch *models.Branch
+	// The commits that give the divergence from the upstream
+	pull *commitPair
+	// The commits that give the divergence from the push destination
+	push *commitPair
+}
+
+// When more local branches than this are to be compared with the same commit, we ask git about all of them.
+const maxRefNamesPerDivergenceCommand = 100
+
+// Returns the tips of the refs that the branches track, keyed by full ref
+// name. A ref that doesn't exist has no entry. tips holds the local branches.
+func (self *BranchLoader) loadTipsOfTrackedRefs(
+	tips map[string]refTip,
+	trackedRefsByBranch map[string]trackedRefs,
+) (map[string]string, error) {
+	refTips := make(map[string]string, len(tips))
+	for refName, tip := range tips {
+		refTips[refName] = tip.hash
 	}
 
-	if track == "[gone]" {
-		return "?", "?", true
+	patterns := set.New[string]()
+	for _, refs := range trackedRefsByBranch {
+		for _, refName := range []string{refs.upstream, refs.push} {
+			if refName != "" && !strings.HasPrefix(refName, "refs/heads/") {
+				patterns.Add(patternForTrackedRef(refName))
+			}
+		}
+	}
+	if patterns.Len() == 0 {
+		return refTips, nil
 	}
 
-	ahead := parseDifference(track, `ahead (\d+)`)
-	behind := parseDifference(track, `behind (\d+)`)
+	sortedPatterns := patterns.ToSlice()
+	slices.Sort(sortedPatterns)
+	cmdArgs := NewGitCmd("for-each-ref").
+		Arg("--format=%(refname)%00%(objectname)").
+		Arg(sortedPatterns...).
+		ToArgv()
 
-	return ahead, behind, false
+	err := self.cmd.New(cmdArgs).DontLog().RunAndProcessLines(func(line string) (bool, error) {
+		if refName, hash, found := strings.Cut(line, "\x00"); found {
+			refTips[refName] = hash
+		}
+		return false, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return refTips, nil
+}
+
+// Returns the for-each-ref pattern that we use to get the tip of the given
+// ref. For a remote-tracking branch this is the pattern.
+func patternForTrackedRef(refName string) string {
+	parts := strings.SplitN(refName, "/", 4)
+	if len(parts) == 4 && parts[0] == "refs" && parts[1] == "remotes" {
+		return strings.Join(parts[:3], "/")
+	}
+	return refName
+}
+
+// Sets how far the branch has diverged from its upstream and from its push
+// destination, as far as we know it without asking git. Where we don't, the
+// branch keeps the value that it had before, and we return the commits to
+// compare.
+func (self *BranchLoader) setDivergences(
+	branch *models.Branch,
+	tip string,
+	refs trackedRefs,
+	refTips map[string]string,
+	oldBranch *models.Branch,
+) (*commitPair, *commitPair) {
+	branch.AheadForPull, branch.BehindForPull = "?", "?"
+	branch.AheadForPush, branch.BehindForPush = "?", "?"
+
+	if refs.upstream == "" {
+		// The branch has no upstream that we have a local version of.
+		return nil, nil
+	}
+
+	var pullPair, pushPair *commitPair
+
+	if upstreamTip, ok := refTips[refs.upstream]; !ok {
+		branch.UpstreamGone = true
+	} else {
+		pullPair = &commitPair{tip: tip, base: upstreamTip}
+		if divergence, ok := self.knownDivergence(*pullPair); ok {
+			branch.AheadForPull = strconv.Itoa(divergence.ahead)
+			branch.BehindForPull = strconv.Itoa(divergence.behind)
+		} else {
+			branch.DivergencePending = true
+			if oldBranch != nil && oldBranch.FullUpstreamRefName() == branch.FullUpstreamRefName() {
+				branch.AheadForPull, branch.BehindForPull = oldBranch.AheadForPull, oldBranch.BehindForPull
+			}
+		}
+	}
+
+	if refs.push == "" {
+		branch.AheadForPush, branch.BehindForPush = "0", "0"
+	} else if pushTip, ok := refTips[refs.push]; ok {
+		pushPair = &commitPair{tip: tip, base: pushTip}
+		if divergence, ok := self.knownDivergence(*pushPair); ok {
+			branch.AheadForPush = strconv.Itoa(divergence.ahead)
+			branch.BehindForPush = strconv.Itoa(divergence.behind)
+		} else {
+			branch.DivergencePending = true
+			if oldBranch != nil && oldBranch.PushRemote == branch.PushRemote && oldBranch.PushBranch == branch.PushBranch {
+				branch.AheadForPush, branch.BehindForPush = oldBranch.AheadForPush, oldBranch.BehindForPush
+			}
+		}
+	}
+
+	return pullPair, pushPair
+}
+
+func (self *BranchLoader) knownDivergence(pair commitPair) (divergence, bool) {
+	if pair.tip == pair.base {
+		return divergence{}, true
+	}
+
+	self.divergencesMutex.Lock()
+	defer self.divergencesMutex.Unlock()
+
+	result, ok := self.divergences[pair]
+	return result, ok
+}
+
+// Returns the given pair if we don't know its divergence, and nil otherwise
+func (self *BranchLoader) pairIfUnknown(pair *commitPair) *commitPair {
+	if pair == nil {
+		return nil
+	}
+	if _, ok := self.knownDivergence(*pair); ok {
+		return nil
+	}
+	return pair
+}
+
+func (self *BranchLoader) rememberDivergences(divergences map[commitPair]divergence) {
+	self.divergencesMutex.Lock()
+	defer self.divergencesMutex.Unlock()
+
+	if self.divergences == nil {
+		self.divergences = make(map[commitPair]divergence, len(divergences))
+	}
+	maps.Copy(self.divergences, divergences)
+}
+
+// Keeps the cache from growing each time a branch or the ref that it tracks
+// moves
+func (self *BranchLoader) forgetDivergencesExcept(pairs *set.Set[commitPair]) {
+	self.divergencesMutex.Lock()
+	defer self.divergencesMutex.Unlock()
+
+	maps.DeleteFunc(self.divergences, func(pair commitPair, _ divergence) bool {
+		return !pairs.Includes(pair)
+	})
+}
+
+// Determines the divergences that the given unresolved branches are missing.
+// Returns the branches, with a new model in the place of each of the
+// unresolved ones. The models that we were given stay untouched, because the
+// UI is showing them by now.
+func (self *BranchLoader) resolveDivergences(
+	branches []*models.Branch,
+	unresolved []unresolvedBranch,
+) ([]*models.Branch, error) {
+	self.resolveDivergencesMutex.Lock()
+	defer self.resolveDivergencesMutex.Unlock()
+
+	t := time.Now()
+
+	// The divergences of the unresolved branches.
+	results := map[commitPair]divergence{}
+	var resultsMutex sync.Mutex
+	record := func(divergences map[commitPair]divergence) {
+		self.rememberDivergences(divergences)
+		resultsMutex.Lock()
+		defer resultsMutex.Unlock()
+		maps.Copy(results, divergences)
+	}
+
+	// The local branches to compare with each commit
+	refNamesByBase := map[string][]string{}
+	pairs := set.New[commitPair]()
+	for _, entry := range unresolved {
+		for _, pair := range []*commitPair{entry.pull, entry.push} {
+			if pair == nil {
+				continue
+			}
+			if divergence, ok := self.knownDivergence(*pair); ok {
+				results[*pair] = divergence
+			} else {
+				refNamesByBase[pair.base] = append(refNamesByBase[pair.base], entry.branch.FullRefName())
+				pairs.Add(*pair)
+			}
+		}
+	}
+
+	// If git fails, the branches that it didn't get to have an unknown divergence, and we return them along with the error
+	err := self.loadDivergences(pairs.ToSlice(), refNamesByBase, record)
+
+	resolvedByOriginal := make(map[*models.Branch]*models.Branch, len(unresolved))
+	for _, entry := range unresolved {
+		resolved := entry.branch.Clone()
+		resolved.DivergencePending = false
+		resolved.AheadForPull, resolved.BehindForPull = resolvedDivergence(
+			entry.pull, results, entry.branch.AheadForPull, entry.branch.BehindForPull)
+		resolved.AheadForPush, resolved.BehindForPush = resolvedDivergence(
+			entry.push, results, entry.branch.AheadForPush, entry.branch.BehindForPush)
+		resolvedByOriginal[entry.branch] = resolved
+	}
+
+	self.Log.Debugf("time to determine the divergences of %d branches: %s", len(unresolved), time.Since(t))
+
+	return lo.Map(branches, func(branch *models.Branch, _ int) *models.Branch {
+		if resolved, ok := resolvedByOriginal[branch]; ok {
+			return resolved
+		}
+		return branch
+	}), err
+}
+
+// Returns the divergence of the given pair as the branch model holds it. nil
+// stands for a divergence that was known from the start, so its values stay.
+// A branch that moved while we were asking git about it has no result; its
+// divergence is unknown until the next load.
+func resolvedDivergence(
+	pair *commitPair,
+	results map[commitPair]divergence,
+	ahead string,
+	behind string,
+) (string, string) {
+	if pair == nil {
+		return ahead, behind
+	}
+	if divergence, ok := results[*pair]; ok {
+		return strconv.Itoa(divergence.ahead), strconv.Itoa(divergence.behind)
+	}
+	return "?", "?"
+}
+
+// Asks git how far the given local branches have diverged from the commits
+// that they are listed under, and passes the results to record
+func (self *BranchLoader) loadDivergences(
+	pairs []commitPair,
+	refNamesByBase map[string][]string,
+	record func(map[commitPair]divergence),
+) error {
+	if self.version.IsAtLeast(2, 41, 0) {
+		return self.loadDivergencesFast(refNamesByBase, record)
+	}
+	return self.loadDivergencesLegacy(pairs, record)
+}
+
+// One git process per base commit. git walks through the history of all the
+// branches that are compared with that commit once.
+func (self *BranchLoader) loadDivergencesFast(
+	refNamesByBase map[string][]string,
+	record func(map[commitPair]divergence),
+) error {
+	errg := errgroup.Group{}
+	errg.SetLimit(runtime.GOMAXPROCS(0))
+
+	for base, refNames := range refNamesByBase {
+		errg.Go(utils.SafeFuncWithError(func() error {
+			refPatterns := lo.Uniq(refNames)
+			if len(refPatterns) > maxRefNamesPerDivergenceCommand {
+				refPatterns = []string{"refs/heads"}
+			}
+
+			cmdArgs := NewGitCmd("for-each-ref").
+				Arg("--format=%(objectname)%00%(ahead-behind:" + base + ")").
+				Arg(refPatterns...).
+				ToArgv()
+			output, err := self.cmd.New(cmdArgs).DontLog().RunWithOutput()
+			if err != nil {
+				return err
+			}
+
+			// We key the results by the commit that git found each branch at.
+			divergences := map[commitPair]divergence{}
+			for line := range strings.Lines(output) {
+				tip, aheadBehindField, _ := strings.Cut(strings.TrimSpace(line), "\x00")
+				if aheadBehind := parseAheadBehindField(aheadBehindField); aheadBehind.valid {
+					divergences[commitPair{tip: tip, base: base}] = divergence{
+						ahead: aheadBehind.ahead, behind: aheadBehind.behind,
+					}
+				}
+			}
+			record(divergences)
+			return nil
+		}))
+	}
+
+	return errg.Wait()
+}
+
+// One git process per branch and base commit, for git versions that don't
+// have %(ahead-behind:...)
+func (self *BranchLoader) loadDivergencesLegacy(
+	pairs []commitPair,
+	record func(map[commitPair]divergence),
+) error {
+	errg := errgroup.Group{}
+	errg.SetLimit(runtime.GOMAXPROCS(0))
+
+	for _, pair := range pairs {
+		errg.Go(utils.SafeFuncWithError(func() error {
+			output, err := self.cmd.New(
+				NewGitCmd("rev-list").
+					Arg("--left-right").
+					Arg("--count").
+					Arg(pair.tip + "..." + pair.base).
+					ToArgv(),
+			).DontLog().RunWithOutput()
+			if err != nil {
+				return err
+			}
+
+			// The format of the output is "<ahead>\t<behind>"
+			if aheadBehind := parseAheadBehindField(output); aheadBehind.valid {
+				record(map[commitPair]divergence{
+					pair: {ahead: aheadBehind.ahead, behind: aheadBehind.behind},
+				})
+			}
+			return nil
+		}))
+	}
+
+	return errg.Wait()
 }
 
 // Splits the remote-tracking ref that the %(push) field names, e.g.
@@ -479,15 +891,6 @@ func parsePushDestination(pushRef string) (string, string) {
 	}
 
 	return remote, branch
-}
-
-func parseDifference(track string, regexStr string) string {
-	re := regexp.MustCompile(regexStr)
-	match := re.FindStringSubmatch(track)
-	if len(match) > 1 {
-		return match[1]
-	}
-	return "0"
 }
 
 // TODO: only look at the new reflog commits, and otherwise store the recencies in

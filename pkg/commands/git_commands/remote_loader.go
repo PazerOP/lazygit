@@ -150,7 +150,7 @@ func (self *RemoteLoader) getRemoteBranches() ([]*models.RemoteBranch, error) {
 
 	if sortByDate {
 		if err := sortRefsWithEqualDatesByAncestry(
-			self.cmd, self.version, remoteBranches, (*models.RemoteBranch).FullRefName, tips,
+			self.cmd, remoteBranches, (*models.RemoteBranch).FullRefName, tips,
 		); err != nil {
 			self.Log.Errorf("Failed to sort remote branches by ancestry: %v", err)
 		}

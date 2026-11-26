@@ -583,6 +583,7 @@ func (self *CommitLoader) getLogCmd(opts GetCommitsOptions) *oscommands.CmdObj {
 	if opts.RefToShowDivergenceFrom != "" {
 		refSpec += "..." + opts.RefToShowDivergenceFrom
 	}
+	excludedAncestor := ancestorToExcludeFromLog(opts, gitLogOrder)
 
 	cmdArgs := NewGitCmd("log").
 		Arg(refSpec).
@@ -596,11 +597,26 @@ func (self *CommitLoader) getLogCmd(opts GetCommitsOptions) *oscommands.CmdObj {
 		ArgIf(opts.FilterPath != "", "--follow", "--name-status").
 		Arg("--no-show-signature").
 		ArgIf(opts.RefToShowDivergenceFrom != "", "--left-right").
+		// A history with fewer commits than the limit doesn't have the commit that we exclude
+		ArgIf(excludedAncestor != "", "--ignore-missing", "^"+excludedAncestor).
 		Arg("--").
 		ArgIf(opts.FilterPath != "", opts.FilterPath).
 		ToArgv()
 
 	return self.cmd.New(cmdArgs).DontLog()
+}
+
+// Returns a commit whose history a log with the given options can leave out without printing anything else, or "" if there is none.
+//
+// The commit that is as many first parents below the ref as the limit has at least that many descendants. They all come before it in the log, so the limit stops the log before it gets to that commit.
+func ancestorToExcludeFromLog(opts GetCommitsOptions, gitLogOrder string) string {
+	// A filter makes the log print fewer commits than it walks through
+	if opts.Limit <= 0 || gitLogOrder == "default" || opts.RefName == "" ||
+		opts.FilterPath != "" || opts.FilterAuthor != "" || opts.RefToShowDivergenceFrom != "" {
+		return ""
+	}
+
+	return fmt.Sprintf("%s~%d", opts.RefName, opts.Limit)
 }
 
 const prettyFormat = `--pretty=format:+%H%x00%at%x00%aN%x00%ae%x00%P%x00%m%x00%D%x00%s`

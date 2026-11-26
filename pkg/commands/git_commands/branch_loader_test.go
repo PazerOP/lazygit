@@ -19,6 +19,7 @@ func TestObtainBranch(t *testing.T) {
 		input                    []string
 		storeCommitDateAsRecency bool
 		expectedBranch           *models.Branch
+		expectedRefs             trackedRefs
 	}
 
 	// Use a time stamp of 2 1/2 hours ago, resulting in a recency string of "2h"
@@ -27,140 +28,119 @@ func TestObtainBranch(t *testing.T) {
 
 	scenarios := []scenario{
 		{
-			testName:                 "TrimHeads",
-			input:                    []string{"", "heads/a_branch", "", "", "", "", "subject", "123", timeStamp},
+			testName:                 "NameWithSlashes",
+			input:                    []string{"", "refs/heads/feature/a_branch", "", "", "subject", "123", timeStamp},
 			storeCommitDateAsRecency: false,
 			expectedBranch: &models.Branch{
-				Name:          "a_branch",
-				AheadForPull:  "?",
-				BehindForPull: "?",
-				AheadForPush:  "?",
-				BehindForPush: "?",
-				Head:          false,
-				Subject:       "subject",
-				CommitHash:    "123",
+				Name:       "feature/a_branch",
+				Head:       false,
+				Subject:    "subject",
+				CommitHash: "123",
 			},
 		},
 		{
 			testName:                 "NoUpstream",
-			input:                    []string{"", "a_branch", "", "", "", "", "subject", "123", timeStamp},
+			input:                    []string{"", "refs/heads/a_branch", "", "", "subject", "123", timeStamp},
 			storeCommitDateAsRecency: false,
 			expectedBranch: &models.Branch{
-				Name:          "a_branch",
-				AheadForPull:  "?",
-				BehindForPull: "?",
-				AheadForPush:  "?",
-				BehindForPush: "?",
-				Head:          false,
-				Subject:       "subject",
-				CommitHash:    "123",
+				Name:       "a_branch",
+				Head:       false,
+				Subject:    "subject",
+				CommitHash: "123",
 			},
 		},
 		{
 			testName:                 "IsHead",
-			input:                    []string{"*", "a_branch", "", "", "", "", "subject", "123", timeStamp},
+			input:                    []string{"*", "refs/heads/a_branch", "", "", "subject", "123", timeStamp},
 			storeCommitDateAsRecency: false,
 			expectedBranch: &models.Branch{
-				Name:          "a_branch",
-				AheadForPull:  "?",
-				BehindForPull: "?",
-				AheadForPush:  "?",
-				BehindForPush: "?",
-				Head:          true,
-				Subject:       "subject",
-				CommitHash:    "123",
+				Name:       "a_branch",
+				Head:       true,
+				Subject:    "subject",
+				CommitHash: "123",
 			},
 		},
 		{
-			testName:                 "IsBehindAndAhead",
-			input:                    []string{"", "a_branch", "a_remote/a_branch", "[behind 2, ahead 3]", "[behind 2, ahead 3]", "refs/remotes/a_remote/a_branch", "subject", "123", timeStamp},
+			testName:                 "PushDestinationIsUpstream",
+			input:                    []string{"", "refs/heads/a_branch", "refs/remotes/a_remote/a_branch", "refs/remotes/a_remote/a_branch", "subject", "123", timeStamp},
 			storeCommitDateAsRecency: false,
+			expectedRefs: trackedRefs{
+				upstream: "refs/remotes/a_remote/a_branch",
+				push:     "refs/remotes/a_remote/a_branch",
+			},
 			expectedBranch: &models.Branch{
-				Name:          "a_branch",
-				AheadForPull:  "3",
-				BehindForPull: "2",
-				AheadForPush:  "3",
-				BehindForPush: "2",
-				PushRemote:    "a_remote",
-				PushBranch:    "a_branch",
-				Head:          false,
-				Subject:       "subject",
-				CommitHash:    "123",
+				Name:       "a_branch",
+				PushRemote: "a_remote",
+				PushBranch: "a_branch",
+				Head:       false,
+				Subject:    "subject",
+				CommitHash: "123",
 			},
 		},
 		{
 			testName:                 "PushDestinationDiffersFromUpstream",
-			input:                    []string{"", "a_branch", "a_remote/a_branch", "[ahead 3]", "[ahead 5]", "refs/remotes/my_fork/feature/a_branch", "subject", "123", timeStamp},
+			input:                    []string{"", "refs/heads/a_branch", "refs/remotes/a_remote/a_branch", "refs/remotes/my_fork/feature/a_branch", "subject", "123", timeStamp},
 			storeCommitDateAsRecency: false,
+			expectedRefs: trackedRefs{
+				upstream: "refs/remotes/a_remote/a_branch",
+				push:     "refs/remotes/my_fork/feature/a_branch",
+			},
 			expectedBranch: &models.Branch{
-				Name:          "a_branch",
-				AheadForPull:  "3",
-				BehindForPull: "0",
-				AheadForPush:  "5",
-				BehindForPush: "0",
-				PushRemote:    "my_fork",
-				PushBranch:    "feature/a_branch",
-				Head:          false,
-				Subject:       "subject",
-				CommitHash:    "123",
+				Name:       "a_branch",
+				PushRemote: "my_fork",
+				PushBranch: "feature/a_branch",
+				Head:       false,
+				Subject:    "subject",
+				CommitHash: "123",
 			},
 		},
 		{
 			testName:                 "PushDestinationNotARemoteTrackingRef",
-			input:                    []string{"", "a_branch", "a_remote/a_branch", "", "", "refs/published/a_branch", "subject", "123", timeStamp},
+			input:                    []string{"", "refs/heads/a_branch", "refs/remotes/a_remote/a_branch", "refs/published/a_branch", "subject", "123", timeStamp},
 			storeCommitDateAsRecency: false,
+			expectedRefs: trackedRefs{
+				upstream: "refs/remotes/a_remote/a_branch",
+				push:     "refs/published/a_branch",
+			},
 			expectedBranch: &models.Branch{
-				Name:          "a_branch",
-				AheadForPull:  "0",
-				BehindForPull: "0",
-				AheadForPush:  "0",
-				BehindForPush: "0",
-				Head:          false,
-				Subject:       "subject",
-				CommitHash:    "123",
+				Name:       "a_branch",
+				Head:       false,
+				Subject:    "subject",
+				CommitHash: "123",
 			},
 		},
 		{
-			testName:                 "RemoteBranchIsGone",
-			input:                    []string{"", "a_branch", "a_remote/a_branch", "[gone]", "[gone]", "refs/remotes/a_remote/a_branch", "subject", "123", timeStamp},
+			testName:                 "UpstreamIsLocalBranch",
+			input:                    []string{"", "refs/heads/a_branch", "refs/heads/other_branch", "", "subject", "123", timeStamp},
 			storeCommitDateAsRecency: false,
+			expectedRefs:             trackedRefs{upstream: "refs/heads/other_branch"},
 			expectedBranch: &models.Branch{
-				Name:          "a_branch",
-				UpstreamGone:  true,
-				AheadForPull:  "?",
-				BehindForPull: "?",
-				AheadForPush:  "?",
-				BehindForPush: "?",
-				PushRemote:    "a_remote",
-				PushBranch:    "a_branch",
-				Head:          false,
-				Subject:       "subject",
-				CommitHash:    "123",
+				Name:       "a_branch",
+				Head:       false,
+				Subject:    "subject",
+				CommitHash: "123",
 			},
 		},
 		{
 			testName:                 "WithCommitDateAsRecency",
-			input:                    []string{"", "a_branch", "", "", "", "", "subject", "123", timeStamp},
+			input:                    []string{"", "refs/heads/a_branch", "", "", "subject", "123", timeStamp},
 			storeCommitDateAsRecency: true,
 			expectedBranch: &models.Branch{
-				Name:          "a_branch",
-				Recency:       "2h",
-				AheadForPull:  "?",
-				BehindForPull: "?",
-				AheadForPush:  "?",
-				BehindForPush: "?",
-				Head:          false,
-				Subject:       "subject",
-				CommitHash:    "123",
+				Name:       "a_branch",
+				Recency:    "2h",
+				Head:       false,
+				Subject:    "subject",
+				CommitHash: "123",
 			},
 		},
 	}
 
 	for _, s := range scenarios {
 		t.Run(s.testName, func(t *testing.T) {
-			branch, tip := obtainBranch(s.input, s.storeCommitDateAsRecency)
+			branch, tip, refs := obtainBranch(s.input, s.storeCommitDateAsRecency)
 			assert.EqualValues(t, s.expectedBranch, branch)
 			assert.Equal(t, refTip{hash: "123", committerDate: timeStamp}, tip)
+			assert.Equal(t, s.expectedRefs, refs)
 		})
 	}
 }
@@ -179,7 +159,7 @@ func TestLoadWhenListingBranchesFails(t *testing.T) {
 		cmd:       gitCommon.cmd,
 	}
 
-	_, err := loader.Load(nil, nil, nil, false, nil, nil)
+	_, _, err := loader.Load(nil, nil)
 	assert.EqualError(t, err, "chdir /path/to/repo: no such file or directory")
 
 	runner.CheckForMissingCalls()
@@ -354,10 +334,12 @@ func TestCheckForRewrittenUpstreams(t *testing.T) {
 
 	gitCommon := buildGitCommon(commonDeps{})
 	loader := &BranchLoader{
-		Common:              gitCommon.Common,
-		GitCommon:           gitCommon,
-		cmd:                 gitCommon.cmd,
-		hasLocalOnlyCommits: hasLocalOnlyCommits,
+		Common:    gitCommon.Common,
+		GitCommon: gitCommon,
+		cmd:       gitCommon.cmd,
+		newLocalOnlyCommitsCheck: func() func(*models.Branch) (bool, error) {
+			return hasLocalOnlyCommits
+		},
 	}
 
 	rendered := false

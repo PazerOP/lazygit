@@ -35,6 +35,8 @@ type ListRenderer struct {
 	// Function to insert non-model items (e.g. section headers). If nil, no
 	// such items are inserted
 	getNonModelItems func() []*NonModelItem
+	// If true, getDisplayStrings returns all items whatever range it is asked for, and the columns are aligned across all of them.
+	alignColumnsAcrossAllItems bool
 
 	// The remaining fields are private and shouldn't be initialized by clients
 	columnPositions []int
@@ -134,6 +136,9 @@ func (self *ListRenderer) renderLines(startIdx int, endIdx int) string {
 	lines, columnPositions := utils.RenderDisplayStrings(
 		self.getDisplayStrings(startModelIdx, endModelIdx),
 		columnAlignments)
+	if self.alignColumnsAcrossAllItems {
+		lines = lines[min(startModelIdx, len(lines)):min(endModelIdx, len(lines))]
+	}
 	self.columnPositions = columnPositions
 	lines = self.insertNonModelItems(nonModelItems, endIdx, startIdx, lines, columnPositions)
 	return strings.Join(lines, "\n")

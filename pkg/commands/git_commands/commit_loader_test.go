@@ -284,6 +284,39 @@ func TestGetCommits(t *testing.T) {
 			expectedError:      nil,
 		},
 		{
+			testName: "should exclude the history that a limited log can't reach",
+			logOrder: "topo-order",
+			opts:     GetCommitsOptions{RefName: "HEAD", RefForPushedStatus: &models.Branch{Name: "mybranch"}, Limit: 300},
+			runner: oscommands.NewFakeRunner(t).
+				ExpectGitArgs([]string{"rev-list", "refs/heads/mybranch", "^mybranch@{u}"}, "", nil).
+				ExpectGitArgs([]string{"log", "HEAD", "--topo-order", "--oneline", "--pretty=format:+%H%x00%at%x00%aN%x00%ae%x00%P%x00%m%x00%D%x00%s", "--abbrev=40", "-300", "--no-show-signature", "--ignore-missing", "^HEAD~300", "--"}, "", nil),
+
+			expectedCommitOpts: []models.NewCommitOpts{},
+			expectedError:      nil,
+		},
+		{
+			testName: "should not exclude any history if `log.order` is `default`",
+			logOrder: "default",
+			opts:     GetCommitsOptions{RefName: "HEAD", RefForPushedStatus: &models.Branch{Name: "mybranch"}, Limit: 300},
+			runner: oscommands.NewFakeRunner(t).
+				ExpectGitArgs([]string{"rev-list", "refs/heads/mybranch", "^mybranch@{u}"}, "", nil).
+				ExpectGitArgs([]string{"log", "HEAD", "--oneline", "--pretty=format:+%H%x00%at%x00%aN%x00%ae%x00%P%x00%m%x00%D%x00%s", "--abbrev=40", "-300", "--no-show-signature", "--"}, "", nil),
+
+			expectedCommitOpts: []models.NewCommitOpts{},
+			expectedError:      nil,
+		},
+		{
+			testName: "should not exclude any history from a filtered log",
+			logOrder: "topo-order",
+			opts:     GetCommitsOptions{RefName: "HEAD", RefForPushedStatus: &models.Branch{Name: "mybranch"}, Limit: 300, FilterAuthor: "someone"},
+			runner: oscommands.NewFakeRunner(t).
+				ExpectGitArgs([]string{"rev-list", "refs/heads/mybranch", "^mybranch@{u}"}, "", nil).
+				ExpectGitArgs([]string{"log", "HEAD", "--topo-order", "--oneline", "--pretty=format:+%H%x00%at%x00%aN%x00%ae%x00%P%x00%m%x00%D%x00%s", "--abbrev=40", "--author=someone", "-300", "--no-show-signature", "--"}, "", nil),
+
+			expectedCommitOpts: []models.NewCommitOpts{},
+			expectedError:      nil,
+		},
+		{
 			testName: "should set filter path",
 			logOrder: "default",
 			opts:     GetCommitsOptions{RefName: "HEAD", RefForPushedStatus: &models.Branch{Name: "mybranch"}, FilterPath: "src"},

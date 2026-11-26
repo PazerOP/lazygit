@@ -42,18 +42,22 @@ func NewBranchesContext(c *ContextCommon) *BranchesContext {
 		FilteredListViewModel: viewModel,
 		ListContextTrait: &ListContextTrait{
 			Context: NewSimpleContext(NewBaseContext(NewBaseContextOpts{
-				View:                       c.Views().Branches,
-				WindowName:                 "branches",
-				Key:                        LOCAL_BRANCHES_CONTEXT_KEY,
-				Kind:                       types.SIDE_CONTEXT,
-				Focusable:                  true,
-				NeedsRerenderOnWidthChange: types.NEEDS_RERENDER_ON_WIDTH_CHANGE_WHEN_WIDTH_CHANGES,
+				View:                        c.Views().Branches,
+				WindowName:                  "branches",
+				Key:                         LOCAL_BRANCHES_CONTEXT_KEY,
+				Kind:                        types.SIDE_CONTEXT,
+				Focusable:                   true,
+				NeedsRerenderOnWidthChange:  types.NEEDS_RERENDER_ON_WIDTH_CHANGE_WHEN_WIDTH_CHANGES,
+				NeedsRerenderOnHeightChange: true,
 			})),
 			ListRenderer: ListRenderer{
-				list:              viewModel,
-				getDisplayStrings: getDisplayStrings,
+				list:                       viewModel,
+				getDisplayStrings:          getDisplayStrings,
+				alignColumnsAcrossAllItems: true,
 			},
 			c: c,
+			// A repository can have thousands of branches.
+			renderOnlyVisibleLines: true,
 		},
 	}
 

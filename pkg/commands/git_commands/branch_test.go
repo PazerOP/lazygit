@@ -7,6 +7,7 @@ import (
 	"github.com/jesseduffield/lazygit/pkg/commands/models"
 	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
 	"github.com/jesseduffield/lazygit/pkg/config"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -424,6 +425,94 @@ func TestBranchHasLocalOnlyCommits(t *testing.T) {
 		t.Run(s.testName, func(t *testing.T) {
 			instance := buildBranchCommands(commonDeps{runner: s.runner})
 			s.test(instance.HasLocalOnlyCommits(branch))
+			s.runner.CheckForMissingCalls()
+		})
+	}
+}
+
+func TestBranchLocalOnlyCommitsCheck(t *testing.T) {
+	type result struct {
+		hasLocalOnlyCommits bool
+		failed              bool
+	}
+
+	type scenario struct {
+		testName string
+		runner   *oscommands.FakeCmdObjRunner
+		expected []result
+	}
+
+	// Branches that track the same upstream
+	branches := []*models.Branch{
+		{Name: "one", UpstreamRemote: "origin", UpstreamBranch: "shared"},
+		{Name: "two", UpstreamRemote: "origin", UpstreamBranch: "shared"},
+	}
+
+	oldValue := "1111111111111111111111111111111111111111"
+	olderValue := "2222222222222222222222222222222222222222"
+
+	reflogArgs := []string{"reflog", "show", "--format=%H", "refs/remotes/origin/shared"}
+	valueBeforeReflogArgs := []string{"rev-parse", "-q", "--verify", "refs/remotes/origin/shared@{2}"}
+	historyArgs := []string{
+		"rev-list", "--max-count=1", "--ignore-missing", oldValue, olderValue,
+		"^refs/remotes/origin/shared", "--",
+	}
+	branchArgs := func(branchName string) []string {
+		return []string{
+			"rev-list", "--max-count=1", "--ignore-missing", "refs/heads/" + branchName,
+			"^refs/remotes/origin/shared", "^" + oldValue, "^" + olderValue, "--",
+		}
+	}
+
+	scenarios := []scenario{
+		{
+			"an upstream that was never rewritten is looked at once for all its branches",
+			oscommands.NewFakeRunner(t).
+				ExpectGitArgs(reflogArgs, oldValue+"\n"+olderValue+"\n", nil).
+				ExpectGitArgs(valueBeforeReflogArgs, "", errors.New("error")).
+				ExpectGitArgs(historyArgs, "", nil),
+			[]result{{hasLocalOnlyCommits: true}, {hasLocalOnlyCommits: true}},
+		},
+		{
+			"an upstream without a reflog has no previous values to look at",
+			oscommands.NewFakeRunner(t).
+				ExpectGitArgs(reflogArgs, "", nil).
+				ExpectGitArgs([]string{"rev-parse", "-q", "--verify", "refs/remotes/origin/shared@{0}"}, "", errors.New("error")),
+			[]result{{hasLocalOnlyCommits: true}, {hasLocalOnlyCommits: true}},
+		},
+		{
+			"each branch of a rewritten upstream is checked against its previous values",
+			oscommands.NewFakeRunner(t).
+				ExpectGitArgs(reflogArgs, oldValue+"\n"+olderValue+"\n", nil).
+				ExpectGitArgs(valueBeforeReflogArgs, "", errors.New("error")).
+				ExpectGitArgs(historyArgs, olderValue+"\n", nil).
+				ExpectGitArgs(branchArgs("one"), "", nil).
+				ExpectGitArgs(branchArgs("two"), "4444444444444444444444444444444444444444\n", nil),
+			[]result{{hasLocalOnlyCommits: false}, {hasLocalOnlyCommits: true}},
+		},
+		{
+			"each branch is checked when looking at the history of the upstream fails",
+			oscommands.NewFakeRunner(t).
+				ExpectGitArgs(reflogArgs, oldValue+"\n"+olderValue+"\n", nil).
+				ExpectGitArgs(valueBeforeReflogArgs, "", errors.New("error")).
+				ExpectGitArgs(historyArgs, "", errors.New("error")).
+				ExpectGitArgs(branchArgs("one"), "", nil).
+				ExpectGitArgs(branchArgs("two"), "", errors.New("error")),
+			[]result{{hasLocalOnlyCommits: false}, {failed: true}},
+		},
+	}
+
+	for _, s := range scenarios {
+		t.Run(s.testName, func(t *testing.T) {
+			instance := buildBranchCommands(commonDeps{runner: s.runner})
+			hasLocalOnlyCommits := instance.NewLocalOnlyCommitsCheck()
+
+			results := lo.Map(branches, func(branch *models.Branch, _ int) result {
+				hasLocalOnlyCommits, err := hasLocalOnlyCommits(branch)
+				return result{hasLocalOnlyCommits: hasLocalOnlyCommits, failed: err != nil}
+			})
+
+			assert.Equal(t, s.expected, results)
 			s.runner.CheckForMissingCalls()
 		})
 	}

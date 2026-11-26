@@ -1214,33 +1214,7 @@ func (self *RefreshHelper) refreshStateSubmoduleConfigs(env refreshEnv) ([]*mode
 func (self *RefreshHelper) refreshBranches(captured capturedBranchState, waitForWorktrees func(), waitForRemotes func(), branchSelection types.BranchSelectionBehavior, loadExtraInfo bool, reflogCommits []*models.Commit, env refreshEnv) []*models.Branch {
 	loadSeq := self.branchLoadSeq.Add(1)
 
-	branches, err := env.git.Loaders.BranchLoader.Load(
-		reflogCommits,
-		captured.mainBranches,
-		captured.oldBranches,
-		loadExtraInfo,
-		func(f func() error) {
-			self.onWorker(env.background, func(_ gocui.Task) error {
-				err := f()
-				if err != nil && self.c.State().GetRepoGeneration() != env.generation {
-					// An error returned from a worker is shown in a popup. Don't
-					// do that if the repo was switched while this worker was in
-					// flight: its results are dropped anyway, and the error
-					// concerns a repo the user has already left — e.g. failing to
-					// compute the behind-counts for a worktree that was deleted
-					// after switching away from it.
-					self.c.Log.Warnf("dropping error from a stale refresh worker after a repo switch: %v", err)
-					return nil
-				}
-				return err
-			})
-		},
-		func() {
-			self.onUIThreadUnlessRepoChanged(env, func() {
-				self.c.Contexts().Branches.HandleRender()
-				self.refreshStatus(env)
-			})
-		})
+	branches, resolveDivergences, err := env.git.Loaders.BranchLoader.Load(reflogCommits, captured.oldBranches)
 	if err != nil {
 		self.c.Log.Error(err)
 	}
@@ -1251,6 +1225,56 @@ func (self *RefreshHelper) refreshBranches(captured capturedBranchState, waitFor
 	waitForWorktrees()
 	waitForRemotes()
 
+	self.showBranches(branches, loadSeq, branchSelection, env)
+
+	if err == nil && loadExtraInfo {
+		if resolveDivergences != nil {
+			// The branches are on screen by now. Wait for their divergences here, so that what runs after the refresh sees them.
+			resolvedBranches, err := resolveDivergences()
+			if err != nil {
+				self.onWorkerUnlessRepoChanged(env, func() error { return err })
+			}
+			// The user can select another branch in the meantime, so don't move the selection again
+			self.showBranches(resolvedBranches, loadSeq, types.KeepBranchSelectionByName, env)
+			branches = resolvedBranches
+		}
+		self.loadExtraBranchInfo(branches, captured.mainBranches, env)
+	}
+
+	// Return the loaded branches so the caller can hand them to the PR fetch without reading them back from the model.
+	return branches
+}
+
+// Runs f on a worker. An error that f returns is shown in a popup, unless the
+// repo was switched while f ran: the error then concerns a repo. That repo is
+// one that the user has left.
+func (self *RefreshHelper) onWorkerUnlessRepoChanged(env refreshEnv, f func() error) {
+	self.onWorker(env.background, func(_ gocui.Task) error {
+		err := f()
+		if err != nil && self.c.State().GetRepoGeneration() != env.generation {
+			self.c.Log.Warnf("dropping error from a stale refresh worker after a repo switch: %v", err)
+			return nil
+		}
+		return err
+	})
+}
+
+func (self *RefreshHelper) loadExtraBranchInfo(branches []*models.Branch, mainBranches *git_commands.MainBranches, env refreshEnv) {
+	env.git.Loaders.BranchLoader.LoadExtraInfo(
+		branches,
+		mainBranches,
+		func(f func() error) { self.onWorkerUnlessRepoChanged(env, f) },
+		func() {
+			self.onUIThreadUnlessRepoChanged(env, func() {
+				self.c.Contexts().Branches.HandleRender()
+				self.refreshStatus(env)
+			})
+		})
+}
+
+// Puts the given branches into the model and renders the views that show
+// them. loadSeq is the sequence number of the load that they come from.
+func (self *RefreshHelper) showBranches(branches []*models.Branch, loadSeq int64, branchSelection types.BranchSelectionBehavior, env refreshEnv) {
 	self.onUIThreadUnlessRepoChanged(env, func() {
 		// Drop this write if a branch load that started later has already applied
 		// its result. At the INITIAL startup stage an immediate load (not
@@ -1299,10 +1323,6 @@ func (self *RefreshHelper) refreshBranches(captured capturedBranchState, waitFor
 	self.refreshView(self.c.Contexts().Branches, env)
 
 	self.refreshStatus(env)
-
-	// Return the freshly-loaded branches so the caller can hand them to the PR
-	// fetch without reading them back from the (bounce-written) model.
-	return branches
 }
 
 func (self *RefreshHelper) refreshFilesAndSubmodules(captured capturedFilesState, env refreshEnv) error {

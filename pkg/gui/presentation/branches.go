@@ -224,7 +224,10 @@ func BranchStatus(
 		} else if branch.MatchesUpstream() {
 			result = style.FgGreen.Sprint("✓")
 		} else if branch.RemoteBranchNotStoredLocally() {
-			result = style.FgMagenta.Sprint("?")
+			// A divergence that git is still determining is not missing
+			if !branch.DivergencePending {
+				result = style.FgMagenta.Sprint("?")
+			}
 		} else if branch.IsBehindForPull() && branch.IsAheadForPull() {
 			// A branch that diverged only because its upstream was rewritten
 			// has no commits of its own, and fast-forwarding it resolves the

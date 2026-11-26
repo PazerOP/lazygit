@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/jesseduffield/lazygit/pkg/commands/models"
 	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
 	"github.com/jesseduffield/lazygit/pkg/utils"
 	"github.com/mgutz/str"
 	"github.com/samber/lo"
+	"github.com/sasha-s/go-deadlock"
 )
 
 type BranchCommands struct {
@@ -393,9 +395,19 @@ func (self *BranchCommands) IsBranchMerged(branch *models.Branch, mainBranches *
 // remote-tracking branch records the values it had before it was rewritten, so
 // a commit that was ever on the remote branch is contained in one of them.
 func (self *BranchCommands) HasLocalOnlyCommits(branch *models.Branch) (bool, error) {
+	return self.hasCommitsThatUpstreamNeverHad(
+		branch, self.previousUpstreamValues(branch.FullUpstreamRefName()))
+}
+
+// Returns whether the given branch has commits that are neither on its
+// upstream nor on any of the given values that the upstream had before
+func (self *BranchCommands) hasCommitsThatUpstreamNeverHad(
+	branch *models.Branch,
+	previousUpstreamValues []string,
+) (bool, error) {
 	upstreamValues := append(
 		[]string{branch.FullUpstreamRefName()},
-		self.previousUpstreamValues(branch.FullUpstreamRefName())...,
+		previousUpstreamValues...,
 	)
 
 	cmdArgs := NewGitCmd("rev-list").
@@ -452,6 +464,68 @@ func (self *BranchCommands) previousUpstreamValues(upstreamRef string) []string 
 	}
 
 	return values
+}
+
+// What the reflog of a remote-tracking branch says about its past
+type upstreamHistory struct {
+	// The values that the branch had before its current one
+	previousValues []string
+	// Whether the current value contains every previous value. True for a branch that was never rewritten.
+	containsPreviousValues bool
+}
+
+// Returns a function that answers HasLocalOnlyCommits for branches that are
+// ahead of their upstream. It reads the history of each upstream once, however
+// many branches it is asked about, and it is safe to call concurrently.
+func (self *BranchCommands) NewLocalOnlyCommitsCheck() func(*models.Branch) (bool, error) {
+	var mutex deadlock.Mutex
+	loadHistory := map[string]func() upstreamHistory{}
+
+	return func(branch *models.Branch) (bool, error) {
+		upstreamRef := branch.FullUpstreamRefName()
+
+		mutex.Lock()
+		load, ok := loadHistory[upstreamRef]
+		if !ok {
+			load = sync.OnceValue(func() upstreamHistory {
+				return self.loadUpstreamHistory(upstreamRef)
+			})
+			loadHistory[upstreamRef] = load
+		}
+		mutex.Unlock()
+
+		history := load()
+		if history.containsPreviousValues {
+			// The upstream never had the commits that the branch is ahead.
+			return true, nil
+		}
+
+		return self.hasCommitsThatUpstreamNeverHad(branch, history.previousValues)
+	}
+}
+
+func (self *BranchCommands) loadUpstreamHistory(upstreamRef string) upstreamHistory {
+	previousValues := self.previousUpstreamValues(upstreamRef)
+	if len(previousValues) == 0 {
+		return upstreamHistory{containsPreviousValues: true}
+	}
+
+	// Prints a commit if one of the values has commits that the current value
+	// doesn't have
+	cmdArgs := NewGitCmd("rev-list").
+		Arg("--max-count=1").
+		Arg("--ignore-missing").
+		Arg(previousValues...).
+		Arg("^" + upstreamRef).
+		Arg("--").
+		ToArgv()
+
+	stdout, _, err := self.cmd.New(cmdArgs).DontLog().RunWithOutputs()
+
+	return upstreamHistory{
+		previousValues:         previousValues,
+		containsPreviousValues: err == nil && stdout == "",
+	}
 }
 
 // Moves branches by writing refs directly. The reflog message is what
